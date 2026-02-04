@@ -10,8 +10,6 @@ AIM2 Class repo
 
 ### 1.1 Core Strengths
 
-Your "loop experiment" idea is exceptionally well-timed and scientifically relevant. Here's what makes it strong:
-
 1. **Direct Alignment with Cutting-Edge Research**: A paper just published in *Patterns* (Cell Press, December 2025) titled *"Autonomous language-image generation loops converge to generic visual motifs"* demonstrates **exactly** the phenomenon you independently conceived. They found that SDXL + LLaVA image→text→image loops converge to just 12 "visual attractors" regardless of initial prompts—what they termed "visual elevator music."
 
 2. **Medical Domain Advantage**: Unlike the Patterns paper which used natural images, you have a **constrained, well-defined manifold** (chest X-rays). CXRs have consistent structure (lungs, heart, diaphragm), making the dynamical systems analysis more tractable and interpretable.
