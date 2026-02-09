@@ -5,6 +5,7 @@ AIM2 Class repo
 # GenAI Stability in Diffusion Models: A Dynamical Systems Approach for Medical Imaging
 
 ---
+Results of the discussion with Claude about our project ideas:
 
 ## 1. ORIGINAL IDEA
 
