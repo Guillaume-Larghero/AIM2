@@ -262,34 +262,8 @@ If you want to pivot or add components:
 - **Novel Metrics**: Propose new stability metrics tailored for medical GenAI
 - **Benchmark**: Create a benchmark for evaluating multimodal generation stability
 
----
 
-## 6. TARGET VENUES
-
-**Q1 ML/Medical AI Conferences:**
-
-1. **NeurIPS 2026** (Deadline: ~May 2026)
-   - Track: Main conference or Workshop on Medical AI
-   - Fit: Novel theoretical framework
-
-2. **ICML 2026** (Deadline: ~January 2026)
-   - Track: Theory/Applications
-   - Fit: Dynamical systems analysis
-
-3. **MICCAI 2026** (Deadline: ~March 2026)
-   - Track: Medical Image Analysis
-   - Fit: Medical imaging focus
-
-4. **ICLR 2027** (Deadline: ~October 2026)
-   - Track: Representation Learning
-   - Fit: Embedding space analysis
-
-5. **CHIL 2026** (Conference on Health, Inference, and Learning)
-   - Fit: Medical ML focus
-
----
-
-## 7. KEY REFERENCES
+## 6. KEY REFERENCES
 
 ### Must-Cite Papers:
 
@@ -315,21 +289,3 @@ If you want to pivot or add components:
 
 10. Chou et al. (2024). "Embedding Geometries of Contrastive Language-Image Pre-Training." *arXiv*.
 
----
-
-## 8. SUMMARY RECOMMENDATION
-
-**Your project idea is excellent and timely.** The key is to position it as:
-
-> **"The first rigorous dynamical systems analysis of medical multimodal generation, providing both theoretical characterization of attractor dynamics and practical insights for clinical AI safety."**
-
-**Unique selling points:**
-1. Medical domain (constrained, interpretable)
-2. Lyapunov/dynamical systems formalization (rigorous theory)
-3. Clinical interpretation (practical relevance)
-4. Builds on very recent (Dec 2025) foundational work in Patterns
-
-**Recommended title for submission:**
-> *"Attractor Dynamics in Medical Vision-Language Generation: A Lyapunov Analysis Framework"*
-
-Would you like me to elaborate on any specific section, help with mathematical formulations, or discuss alternative experimental designs?
