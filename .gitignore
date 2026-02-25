@@ -29,3 +29,6 @@ __pycache__/
 
 dataset/physionet.org/
 
+
+# All outputs folders
+**/outputs/

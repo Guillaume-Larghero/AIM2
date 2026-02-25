@@ -1,0 +1,13 @@
+torch>=2.0
+torchvision>=0.15
+timm
+transformers
+pandas
+numpy
+scikit-learn
+tensorboard
+tqdm
+Pillow
+matplotlib
+seaborn
+umap-learn
