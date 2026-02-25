@@ -1,1 +1,31 @@
-/n/groups/training/bmif203/AIM2/dataset/physionet.org/files/mimic-cxr-jpg/2.1.0/files
+# Existing exclusion
+/dataset/physionet.org/files/mimic-cxr-jpg/2.1.0/files
+
+# Shell scripts
+*.sh
+
+# Logs folder
+GENERATION/scripts/logs/
+
+# Python cache
+__pycache__/
+
+# Large files (model weights & CSVs)
+*.pth
+*.csv
+
+# Env
+
+.env
+
+.env_*
+
+# Log files
+
+*.log
+
+
+
+
+dataset/physionet.org/
+
