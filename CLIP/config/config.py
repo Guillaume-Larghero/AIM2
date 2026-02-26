@@ -12,7 +12,7 @@ import numpy as np
 @dataclass
 class PathConfig:
     """File paths and directories."""
-    BASE_DIR: str = "/n/scratch/users/g/gul075/Temp_AIM2" # "/n/groups/training/bmif203/AIM2"
+    BASE_DIR: str = "/n/groups/training/bmif203/AIM2"
 
     DATA_CSV: str = "processed_data/processed_data.csv"
     IMAGE_ROOT: str = "cxr_jpg" # needs to be changed to the common repo when download is done

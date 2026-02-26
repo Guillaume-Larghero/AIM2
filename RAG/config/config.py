@@ -13,7 +13,7 @@ import torch
 @dataclass
 class PathConfig:
     """File paths and directories."""
-    BASE_DIR: str = "/n/scratch/users/g/gul075/Temp_AIM2" # "/n/groups/training/bmif203/AIM2"
+    BASE_DIR: str = "/n/groups/training/bmif203/AIM2"
 
     # CLIP model dependency
     CLIP_CHECKPOINT: str = "CLIP/outputs/checkpoints/best_model.pth"

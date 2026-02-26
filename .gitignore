@@ -1,11 +1,13 @@
-# Existing exclusion
+# Datasaets
 /dataset/physionet.org/files/mimic-cxr-jpg/2.1.0/files
+dataset/physionet.org/
 
 # Shell scripts
 *.sh
 
 # Logs folder
 GENERATION/scripts/logs/
+*.log
 
 # Python cache
 __pycache__/
@@ -15,20 +17,11 @@ __pycache__/
 *.csv
 
 # Env
-
 .env
-
 .env_*
 
-# Log files
-
-*.log
-
-
-
-
-dataset/physionet.org/
-
-
-# All outputs folders
+# Outputs
 **/outputs/
+
+#Experiments
+Experiments/
