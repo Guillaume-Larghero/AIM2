@@ -16,7 +16,7 @@ from diffusers import DiffusionPipeline, StableDiffusionImg2ImgPipeline, DPMSolv
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ROENTGEN_PATH = "/n/scratch/users/g/gul075/models/RoentGen-v2" # TO CHANGE FOR ROSHAN
+DEFAULT_ROENTGEN_PATH = "/n/groups/training/bmif203/AIM2/models/RoentGen-v2" # TO CHANGE FOR ROSHAN
 FALLBACK_HF_MODEL = "stanfordmimi/RoentGen-v2"
 
 

@@ -1,0 +1,46 @@
+# LoRA fine-tuning configuration for SD 1.5 + Long-CLIP on MIMIC-CXR
+
+# ----- Paths ---------------------------------------------------------------
+manifest:    /n/groups/training/bmif203/AIM2/dataset/mimic_cxr_manifest.csv
+image_root:  /n/groups/training/bmif203/AIM2/dataset/physionet.org/files/mimic-cxr-jpg/2.1.0
+report_root: /n/groups/training/bmif203/AIM2/dataset/physionet.org/files/mimic-cxr-jpg/2.1.0
+output_dir:  /n/groups/training/bmif203/AIM2/DIFFUSION/outputs/lora_longclip
+logging_dir: logs
+
+# ----- Models ---------------------------------------------------------------
+pretrained_model: stable-diffusion-v1-5/stable-diffusion-v1-5
+longclip_model:   zer0int/LongCLIP-GmP-ViT-L-14
+revision: null
+
+# ----- Data -----------------------------------------------------------------
+report_section:    both      # findings | impression | both
+resolution:        512
+num_workers:       8
+max_train_samples: 1000      # set to e.g. 1000 for a debug run; null = full dataset
+
+# ----- LoRA -----------------------------------------------------------------
+lora_rank:    16
+lora_alpha:   16
+lora_dropout: 0.1
+
+# ----- Device ---------------------------------------------------------------
+device: cuda:8                 # cuda | cpu
+
+# ----- Training -------------------------------------------------------------
+train_batch_size:            32
+gradient_accumulation_steps: 4
+gradient_checkpointing:      false
+max_train_steps:             5000
+learning_rate:               0.0001
+lr_scheduler:                cosine
+lr_warmup_steps:             500
+snr_gamma:                   5.0    # Min-SNR weighting; set 0.0 to disable
+mixed_precision:             fp16   # no | fp16 | bf16
+seed:                        42
+
+# ----- Checkpointing --------------------------------------------------------
+checkpointing_steps:    5000
+resume_from_checkpoint: null  # path to checkpoint dir, or null
+
+# ----- Logging --------------------------------------------------------------
+report_to: tensorboard
