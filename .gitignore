@@ -11,6 +11,7 @@ GENERATION/scripts/logs/
 
 # Python cache
 __pycache__/
+.cache/
 
 # Large files (model weights & CSVs)
 *.pth
