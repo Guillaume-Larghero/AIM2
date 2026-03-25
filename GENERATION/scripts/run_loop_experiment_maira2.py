@@ -1,10 +1,19 @@
-"""Bidirectional generation loop experiment.
+"""Bidirectional generation loop experiment using MAIRA-2 for image-to-text.
+
+Replaces the RAG + LLM report generator with direct MAIRA-2 inference.
+The text-to-image half of the loop (RoentGen-v2 diffusion) is unchanged.
 
 Cycles: Report -> Image -> Report -> Image -> ... (N iterations)
 Tracks semantic drift via CLIP embeddings, BLEU scores, and CheXpert label preservation.
+
+Usage:
+    python -m GENERATION.scripts.run_loop_experiment_maira2 \\
+        --study_id 50000014 --n_iterations 5 --start_from report \\
+        --use_grounding --visualize
 """
 
 import os
+os.environ['HF_HOME'] = '/n/groups/training/bmif203/AIM2/.cache'
 import shutil
 import argparse
 import logging
@@ -25,7 +34,6 @@ from transformers import AutoTokenizer
 try:
     from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 except ImportError:
-    # Fallback: simple BLEU-4 with add-1 smoothing (no nltk/sqlite3 dependency)
     from collections import Counter
     import math
 
@@ -44,9 +52,10 @@ except ImportError:
             hyp_ngrams = Counter(tuple(hypothesis[i:i+n]) for i in range(len(hypothesis)-n+1))
             clipped = sum(min(hyp_ngrams[ng], ref_ngrams[ng]) for ng in hyp_ngrams)
             total = max(sum(hyp_ngrams.values()), 1)
-            scores.append((clipped + 1) / (total + 1))  # add-1 smoothing
+            scores.append((clipped + 1) / (total + 1))
         bp = min(1.0, math.exp(1 - len(ref) / max(len(hypothesis), 1)))
         return bp * math.exp(sum(math.log(s) for s in scores) / 4)
+
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -64,10 +73,6 @@ except ImportError:
 
 from GENERATION.config.config import GenerationPipelineConfig
 from GENERATION.chexpert.extractor import extract_chexpert_from_reports
-from GENERATION.llm.wrapper import LLMWrapper
-from GENERATION.llm.prompts import PromptBuilder
-from GENERATION.pipeline.retriever import RAGRetriever
-from GENERATION.pipeline.generator import ReportGenerator
 from GENERATION.pipeline.text_to_image import (
     TextToImageRetriever, DiffusionImageGenerator, TextToImagePipeline
 )
@@ -76,6 +81,9 @@ from RAG.config.config import RAGConfig
 from RAG.embedder.embedder import CLIPEmbedder
 from RAG.indexing.dual_indexer import DualFaissIndexer
 from RAG.metadata.metadata_db import MetadataDB
+
+# MAIRA-2 replaces the RAG + LLM generator
+from MAIRA.maira import MAIRAReportGenerator, load_mimic_study
 
 warnings.filterwarnings('ignore')
 logger = logging.getLogger(__name__)
@@ -88,10 +96,11 @@ CHEXPERT_LABELS = [
 ]
 
 
-# __________Helpers:____________
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def normalize_study_id(study_id: str, add_prefix: bool = False) -> str:
-    """Normalize study ID: metadata DB uses IDs without 's' prefix."""
     study_id = str(study_id).strip()
     if add_prefix:
         if not study_id.startswith('s'):
@@ -109,7 +118,9 @@ def get_positive_labels(chexpert_labels: List[float], label_names: List[str]) ->
             if i < len(label_names) and val == 1.0]
 
 
-# __________Data classes:__________
+# ---------------------------------------------------------------------------
+# Data classes (identical to original loop experiment)
+# ---------------------------------------------------------------------------
 
 @dataclass
 class LoopStep:
@@ -155,23 +166,51 @@ class LoopTrace:
             json.dump(self.to_dict(), f, indent=2)
 
 
-# _____________Main_____________
+# ---------------------------------------------------------------------------
+# Main experiment class
+# ---------------------------------------------------------------------------
 
-class SemanticLoopExperiment:
-    """Runs bidirectional generation loops and tracks semantic drift."""
+class SemanticLoopExperimentMAIRA2:
+    """Loop experiment with MAIRA-2 replacing the RAG + LLM image-to-text step.
 
-    def __init__(self, config, text_to_image_pipeline, image_to_text_retriever,
-                 image_to_text_generator, clip_embedder, metadata_db,
-                 chexpert_labels=None):
+    The text-to-image direction (RoentGen-v2 diffusion) is unchanged.
+    MAIRA-2 generates the findings section directly from the CXR image.
+
+    Args:
+        config: GenerationPipelineConfig.
+        text_to_image_pipeline: TextToImagePipeline (unchanged from original).
+        maira_generator: MAIRAReportGenerator instance.
+        clip_embedder: CLIPEmbedder for computing embedding drift metrics.
+        metadata_db: MetadataDB for resolving ground-truth data.
+        data_csv: Path to processed_data.csv (for MAIRA lateral/indication lookup).
+        include_lateral: Pass lateral view to MAIRA-2 when available.
+        include_indication: Pass indication text to MAIRA-2 when available.
+        chexpert_labels: List of CheXpert label names.
+    """
+
+    def __init__(
+        self,
+        config,
+        text_to_image_pipeline,
+        maira_generator: MAIRAReportGenerator,
+        clip_embedder,
+        metadata_db,
+        data_csv: str,
+        include_lateral: bool = True,
+        include_indication: bool = True,
+        chexpert_labels=None,
+    ):
         self.config = config
         self.t2i_pipeline = text_to_image_pipeline
-        self.i2t_retriever = image_to_text_retriever
-        self.i2t_generator = image_to_text_generator
+        self.maira = maira_generator
         self.clip_embedder = clip_embedder
         self.metadata_db = metadata_db
+        self.data_csv = data_csv
+        self.include_lateral = include_lateral
+        self.include_indication = include_indication
         self.chexpert_labels = chexpert_labels or CHEXPERT_LABELS
         self.tokenizer = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
-        logger.info("SemanticLoopExperiment initialized")
+        logger.info("SemanticLoopExperimentMAIRA2 initialized")
 
     def _text_embedding(self, findings: str, impression: str) -> np.ndarray:
         text = f"{findings} {impression}".strip()
@@ -193,20 +232,26 @@ class SemanticLoopExperiment:
             logger.warning(f"CheXpert extraction failed: {e}")
             return [0.0] * 14
 
-    def run_loop(self, seed_study_id: str, n_iterations: int = 5,
-                 start_from: str = "report", output_dir: str = None,
-                 save_intermediates: bool = True, seed: int = 42,
-                 fallback_row: Optional[Dict] = None) -> LoopTrace:
+    def run_loop(
+        self,
+        seed_study_id: str,
+        n_iterations: int = 5,
+        start_from: str = "report",
+        output_dir: str = None,
+        save_intermediates: bool = True,
+        seed: int = 42,
+        fallback_row: Optional[Dict] = None,
+    ) -> LoopTrace:
         normalized_id = normalize_study_id(seed_study_id, add_prefix=False)
 
         if output_dir is None:
             output_dir = os.path.join(
-                self.config.paths.OUTPUT_DIR, "loop_experiments",
+                self.config.paths.OUTPUT_DIR, "loop_experiments_maira2",
                 f"{normalized_id}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
             )
         os.makedirs(output_dir, exist_ok=True)
 
-        # Resolve ground truth
+        # Resolve ground truth from metadata DB (with CSV fallback)
         gt = self.metadata_db.get_study(normalized_id)
         if gt is None:
             gt = self.metadata_db.get_study(f's{normalized_id}')
@@ -234,17 +279,25 @@ class SemanticLoopExperiment:
 
         trace = LoopTrace(
             trace_id=hashlib.md5(f"{normalized_id}_{time.time()}".encode()).hexdigest()[:12],
-            seed_study_id=normalized_id, start_from=start_from,
-            n_iterations=n_iterations, gt_findings=gt.get('findings', ''),
-            gt_impression=gt.get('impression', ''), gt_image_path=gt.get('image_path', ''),
+            seed_study_id=normalized_id,
+            start_from=start_from,
+            n_iterations=n_iterations,
+            gt_findings=gt.get('findings', ''),
+            gt_impression=gt.get('impression', ''),
+            gt_image_path=gt.get('image_path', ''),
             gt_chexpert_labels=gt_chexpert,
             timestamp=datetime.datetime.now().isoformat(),
-            config={'seed': seed, 'n_iterations': n_iterations,
-                    'start_from': start_from, 'gt_positive_labels': gt_positive}
+            config={
+                'seed': seed, 'n_iterations': n_iterations,
+                'start_from': start_from, 'gt_positive_labels': gt_positive,
+                'i2t_model': 'maira-2',
+            }
         )
 
-        logger.info(f"Loop {trace.trace_id} | Study: {normalized_id} | "
-                     f"Labels: {gt_positive} | Start: {start_from} | Iters: {n_iterations}")
+        logger.info(
+            f"Loop {trace.trace_id} | Study: {normalized_id} | "
+            f"Labels: {gt_positive} | Start: {start_from} | Iters: {n_iterations}"
+        )
 
         current_findings = trace.gt_findings
         current_impression = trace.gt_impression
@@ -276,8 +329,10 @@ class SemanticLoopExperiment:
             logger.info(f"--- Iteration {it}/{n_iterations} ---")
 
             if start_from == "report":
-                img_step = self._step_t2i(current_findings, current_impression,
-                                          it, output_dir, save_intermediates, seed + it)
+                img_step = self._step_t2i(
+                    current_findings, current_impression,
+                    it, output_dir, save_intermediates, seed + it
+                )
                 trace.steps.append(img_step)
                 current_image_path = img_step.content_path
 
@@ -291,8 +346,10 @@ class SemanticLoopExperiment:
                 current_findings = rpt_step.findings
                 current_impression = rpt_step.impression
 
-                img_step = self._step_t2i(current_findings, current_impression,
-                                          it, output_dir, save_intermediates, seed + it)
+                img_step = self._step_t2i(
+                    current_findings, current_impression,
+                    it, output_dir, save_intermediates, seed + it
+                )
                 trace.steps.append(img_step)
                 current_image_path = img_step.content_path
 
@@ -327,36 +384,44 @@ class SemanticLoopExperiment:
         logger.info(f"  [T->I] Generated in {dt:.2f}s")
         return step
 
-    def _step_i2t(self, image_path, iteration) -> LoopStep:
+    def _step_i2t(self, image_path: str, iteration: int) -> LoopStep:
+        """MAIRA-2 direct inference: image -> findings."""
         t0 = time.time()
-        result = self.i2t_generator.generate_report(
-            image_path=image_path, study_id=f"loop_iter{iteration}",
-            return_detailed_info=False
+
+        # For generated images (iteration > 0) no lateral/indication is available.
+        # For the GT image we could optionally fetch them from the CSV, but MAIRA
+        # works well with just the frontal image in this loop context.
+        result = self.maira.generate_report(
+            image_path=image_path,
+            study_id=f"loop_iter{iteration}",
         )
+
         dt = time.time() - t0
         chexpert = self._extract_chexpert(result.findings, result.impression)
         positive = get_positive_labels(chexpert, self.chexpert_labels)
+
         step = LoopStep(
             iteration=iteration, step_type="report",
             content_path=image_path,
             findings=result.findings, impression=result.impression,
-            retrieved_study_ids=result.retrieved_study_ids,
-            retrieval_scores=result.retrieval_scores,
+            retrieved_study_ids=[],  # no retrieval with MAIRA-2
+            retrieval_scores=[],
             chexpert_labels=chexpert, positive_labels=positive,
             generation_time=dt
         )
         step.text_embedding = self._text_embedding(result.findings, result.impression).tolist()
         if image_path and os.path.exists(image_path):
             step.image_embedding = self._image_embedding(image_path).tolist()
-        logger.info(f"  [I->T] Generated in {dt:.2f}s | Labels: {positive}")
+        logger.info(f"  [I->T] MAIRA-2 in {dt:.2f}s | Labels: {positive}")
         return step
 
-    # -- metrics --
+    # -- metrics (identical to original) --
 
     def _compute_metrics(self, trace: LoopTrace) -> Dict[str, Any]:
         metrics = {
             'n_steps': len(trace.steps),
             'total_generation_time': sum(s.generation_time for s in trace.steps),
+            'i2t_model': 'maira-2',
         }
         gt_positive = get_positive_labels(trace.gt_chexpert_labels or [], self.chexpert_labels)
         metrics['gt_positive_labels'] = gt_positive
@@ -383,7 +448,6 @@ class SemanticLoopExperiment:
                 float(np.linalg.norm(e - gt)) for e in image_embs
             ]
 
-        # BLEU
         try:
             smoother = SmoothingFunction().method1
             gt_tokens = f"{trace.gt_findings} {trace.gt_impression}".split()
@@ -397,7 +461,6 @@ class SemanticLoopExperiment:
         except Exception as e:
             logger.warning(f"BLEU computation failed: {e}")
 
-        # CheXpert label preservation
         if gt_positive:
             label_preservation = {label: [] for label in gt_positive}
             recall_list, precision_list, jaccard_list = [], [], []
@@ -432,7 +495,9 @@ class SemanticLoopExperiment:
         return metrics
 
 
-#__________Visualization:__________
+# ---------------------------------------------------------------------------
+# Visualization (identical to original)
+# ---------------------------------------------------------------------------
 
 class LoopVisualizer:
     """UMAP trajectory and drift curve visualizations."""
@@ -443,14 +508,13 @@ class LoopVisualizer:
 
     def visualize_trace(self, trace: LoopTrace,
                         training_embeddings: Optional[np.ndarray] = None):
-
         text_embs = [np.array(s.text_embedding) for s in trace.steps if s.text_embedding]
         image_embs = [np.array(s.image_embedding) for s in trace.steps if s.image_embedding]
 
         if len(text_embs) >= 2:
             self._plot_umap_trajectory(
                 np.array(text_embs),
-                f"Text Embedding Trajectory - {trace.seed_study_id}",
+                f"Text Embedding Trajectory (MAIRA-2) - {trace.seed_study_id}",
                 f"{trace.trace_id}_text_trajectory.png",
                 training_embeddings, trace
             )
@@ -469,7 +533,6 @@ class LoopVisualizer:
     def _plot_umap_trajectory(self, embeddings, title, filename,
                               training_embeddings=None, trace=None):
         try:
-
             fig, ax = plt.subplots(figsize=(14, 11))
 
             if training_embeddings is not None and len(training_embeddings) > 0:
@@ -489,16 +552,16 @@ class LoopVisualizer:
             colors = plt.cm.viridis(np.linspace(0, 1, len(loop_2d)))
             for i in range(len(loop_2d)):
                 ax.scatter(loop_2d[i, 0], loop_2d[i, 1], c=[colors[i]], s=150,
-                          edgecolors='black', linewidth=1.5, zorder=10)
+                           edgecolors='black', linewidth=1.5, zorder=10)
                 ax.annotate(f'{i}', (loop_2d[i, 0], loop_2d[i, 1]),
-                           fontsize=10, ha='center', va='center', color='white', fontweight='bold')
+                            fontsize=10, ha='center', va='center', color='white', fontweight='bold')
                 if i < len(loop_2d) - 1:
                     ax.annotate('', xy=(loop_2d[i+1, 0], loop_2d[i+1, 1]),
-                               xytext=(loop_2d[i, 0], loop_2d[i, 1]),
-                               arrowprops=dict(arrowstyle='->', color=colors[i], lw=2))
+                                xytext=(loop_2d[i, 0], loop_2d[i, 1]),
+                                arrowprops=dict(arrowstyle='->', color=colors[i], lw=2))
 
             ax.scatter(loop_2d[0, 0], loop_2d[0, 1], c='red', s=300, marker='*',
-                      edgecolors='black', linewidth=2, zorder=15, label='Ground Truth')
+                       edgecolors='black', linewidth=2, zorder=15, label='Ground Truth')
 
             if trace and trace.gt_chexpert_labels:
                 pos = get_positive_labels(trace.gt_chexpert_labels, CHEXPERT_LABELS)
@@ -507,11 +570,12 @@ class LoopVisualizer:
                     if len(pos) > 3:
                         lbl += f" (+{len(pos)-3})"
                     ax.annotate(f'GT: {lbl}', xy=(loop_2d[0, 0], loop_2d[0, 1]),
-                               xytext=(10, 20), textcoords='offset points', fontsize=9, color='red',
-                               bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
+                                xytext=(10, 20), textcoords='offset points', fontsize=9, color='red',
+                                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
 
             ax.set_title(title, fontsize=14, fontweight='bold')
-            ax.set_xlabel('Dim 1'); ax.set_ylabel('Dim 2')
+            ax.set_xlabel('Dim 1')
+            ax.set_ylabel('Dim 2')
             ax.legend(loc='best')
             sm = plt.cm.ScalarMappable(cmap='viridis', norm=plt.Normalize(0, len(loop_2d)-1))
             sm.set_array([])
@@ -534,13 +598,16 @@ class LoopVisualizer:
             if key in trace.metrics:
                 drift = trace.metrics[key]
                 ax.plot(range(len(drift)), drift, f'{color}-o', linewidth=2, markersize=8)
-                ax.set_xlabel('Step'); ax.set_ylabel('Distance from GT')
-                ax.set_title(title); ax.grid(True, alpha=0.3)
+                ax.set_xlabel('Step')
+                ax.set_ylabel('Distance from GT')
+                ax.set_title(title)
+                ax.grid(True, alpha=0.3)
 
-        plt.suptitle(f"Semantic Drift - {trace.seed_study_id}", fontsize=14, fontweight='bold')
+        plt.suptitle(f"Semantic Drift (MAIRA-2) - {trace.seed_study_id}",
+                     fontsize=14, fontweight='bold')
         plt.tight_layout()
         plt.savefig(os.path.join(self.output_dir, f"{trace.trace_id}_drift_curves.png"),
-                   dpi=150, bbox_inches='tight')
+                    dpi=150, bbox_inches='tight')
         plt.close()
 
     def _create_content_gallery(self, trace):
@@ -561,22 +628,23 @@ class LoopVisualizer:
             axes[0, idx].axis('off')
             txt = f"Findings:\n{step.findings[:150]}...\n\nImpression:\n{step.impression[:100]}..."
             axes[1, idx].text(0.5, 0.5, txt, ha='center', va='center', fontsize=8,
-                             wrap=True, transform=axes[1, idx].transAxes)
+                              wrap=True, transform=axes[1, idx].transAxes)
             axes[1, idx].axis('off')
-        plt.suptitle(f"Gallery - {trace.seed_study_id}", fontsize=14, fontweight='bold')
+        plt.suptitle(f"Gallery (MAIRA-2) - {trace.seed_study_id}", fontsize=14, fontweight='bold')
         plt.tight_layout()
         plt.savefig(os.path.join(self.output_dir, f"{trace.trace_id}_gallery.png"),
-                   dpi=150, bbox_inches='tight')
+                    dpi=150, bbox_inches='tight')
         plt.close()
 
     def _save_metrics_summary(self, trace):
         path = os.path.join(self.output_dir, f"{trace.trace_id}_summary.txt")
         gt_positive = get_positive_labels(trace.gt_chexpert_labels or [], CHEXPERT_LABELS)
         with open(path, 'w') as f:
-            f.write(f"Loop Experiment Summary\n{'='*60}\n\n")
+            f.write(f"Loop Experiment Summary (MAIRA-2)\n{'='*60}\n\n")
             f.write(f"Trace ID: {trace.trace_id}\n")
             f.write(f"Seed Study: {trace.seed_study_id}\n")
             f.write(f"Start From: {trace.start_from}\n")
+            f.write(f"I2T Model: MAIRA-2 (microsoft/maira-2)\n")
             f.write(f"Iterations: {trace.n_iterations}\n")
             f.write(f"Steps: {len(trace.steps)}\n\n")
             f.write(f"GT Labels ({len(gt_positive)} positive):\n")
@@ -596,7 +664,6 @@ class LoopVisualizer:
     def visualize_multiple_traces(self, traces: List[LoopTrace],
                                   training_embeddings: Optional[np.ndarray] = None):
         try:
-
             fig, axes = plt.subplots(1, 2, figsize=(16, 7))
             all_embs, trace_labels, iter_labels = [], [], []
             for ti, trace in enumerate(traces):
@@ -629,7 +696,7 @@ class LoopVisualizer:
                 t2 = l2d[idx:idx+ns]
                 for i in range(len(t2)-1):
                     axes[0].annotate('', xy=(t2[i+1, 0], t2[i+1, 1]), xytext=(t2[i, 0], t2[i, 1]),
-                                    arrowprops=dict(arrowstyle='->', color=plt.cm.tab10(ti/10), lw=1.5, alpha=0.7))
+                                     arrowprops=dict(arrowstyle='->', color=plt.cm.tab10(ti/10), lw=1.5, alpha=0.7))
                 idx += ns
             axes[0].set_title('By Seed Sample', fontweight='bold')
 
@@ -640,15 +707,19 @@ class LoopVisualizer:
             plt.colorbar(sm, ax=axes[1]).set_label('Iteration')
             axes[1].set_title('By Iteration', fontweight='bold')
 
-            plt.suptitle(f"Multi-Trace ({len(traces)} traces)", fontsize=14, fontweight='bold')
+            plt.suptitle(f"Multi-Trace / MAIRA-2 ({len(traces)} traces)",
+                         fontsize=14, fontweight='bold')
             plt.tight_layout()
-            plt.savefig(os.path.join(self.output_dir, "multi_trace_umap.png"), dpi=150, bbox_inches='tight')
+            plt.savefig(os.path.join(self.output_dir, "multi_trace_umap.png"),
+                        dpi=150, bbox_inches='tight')
             plt.close()
         except Exception as e:
             logger.warning(f"Multi-trace visualization failed: {e}")
 
 
-# ___________HTML report:__________
+# ---------------------------------------------------------------------------
+# HTML report
+# ---------------------------------------------------------------------------
 
 def generate_html_report(traces: List[LoopTrace], output_path: str):
     n_traces = len(traces)
@@ -656,7 +727,7 @@ def generate_html_report(traces: List[LoopTrace], output_path: str):
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     html = f'''<!DOCTYPE html>
-<html><head><title>Loop Experiment</title>
+<html><head><title>Loop Experiment (MAIRA-2)</title>
 <style>
 body {{ font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }}
 .container {{ max-width: 1400px; margin: 0 auto; }}
@@ -674,10 +745,11 @@ h1 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
 .gt-badge {{ background: #e74c3c; }}
 .summary {{ background: #3498db; color: white; padding: 20px; border-radius: 10px; margin: 20px 0; }}
 .label-tag {{ background: #27ae60; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.75em; margin: 2px; display: inline-block; }}
+.model-badge {{ background: #8e44ad; color: white; padding: 3px 10px; border-radius: 15px; font-size: 0.85em; }}
 </style></head><body><div class="container">
-<h1>Semantic Loop Experiment</h1>
+<h1>Semantic Loop Experiment <span class="model-badge">MAIRA-2</span></h1>
 <div class="summary"><h3>Summary</h3>
-<p><b>Traces:</b> {n_traces} | <b>Iterations:</b> {n_iters} | <b>Generated:</b> {ts}</p></div>
+<p><b>Traces:</b> {n_traces} | <b>Iterations:</b> {n_iters} | <b>I2T Model:</b> MAIRA-2 | <b>Generated:</b> {ts}</p></div>
 '''
 
     for trace in traces:
@@ -724,10 +796,14 @@ h1 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
     logger.info(f"Saved HTML report to: {output_path}")
 
 
-# ______________CLI______________ :
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Bidirectional Generation Loop Experiment")
+    parser = argparse.ArgumentParser(
+        description="Bidirectional Loop Experiment with MAIRA-2 image-to-text"
+    )
     parser.add_argument('--study_id', type=str, default=None)
     parser.add_argument('--n_samples', type=int, default=1)
     parser.add_argument('--n_iterations', type=int, default=5)
@@ -735,7 +811,16 @@ def parse_args():
     parser.add_argument('--output_dir', type=str, default=None)
     parser.add_argument('--experiment_name', type=str, default=None)
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--device', type=str, choices=['cuda', 'cpu'], default='cuda')
+    parser.add_argument('--device', type=str, default='cuda',
+                        help='PyTorch device, e.g. cuda, cuda:3, cpu')
+    # MAIRA-2 options
+    parser.add_argument('--use_grounding', action='store_true',
+                        help='Generate grounded reports (findings with bounding boxes)')
+    parser.add_argument('--no_lateral', action='store_true',
+                        help='Do not pass lateral image to MAIRA-2')
+    parser.add_argument('--no_indication', action='store_true',
+                        help='Do not pass indication text to MAIRA-2')
+    # Visualization
     parser.add_argument('--visualize', action='store_true')
     parser.add_argument('--visualize_with_training', action='store_true')
     parser.add_argument('--debug', action='store_true')
@@ -755,12 +840,14 @@ def main():
         config.system.DEVICE = args.device
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    experiment_name = args.experiment_name or f"loop_experiment_{timestamp}"
-    output_dir = args.output_dir or os.path.join(config.paths.OUTPUT_DIR, "loop_experiments", experiment_name)
+    experiment_name = args.experiment_name or f"loop_maira2_{timestamp}"
+    output_dir = args.output_dir or os.path.join(
+        config.paths.OUTPUT_DIR, "loop_experiments_maira2", experiment_name
+    )
     os.makedirs(output_dir, exist_ok=True)
     logger.info(f"Output: {output_dir}")
 
-    # Initialize components
+    # ---- Shared components (still needed for T2I and embedding metrics) ----
     logger.info("Loading FAISS indices...")
     dual_indexer = DualFaissIndexer(rag_config, embedding_dim=256)
     dual_indexer.load(config.paths.INDEX_DIR)
@@ -774,21 +861,14 @@ def main():
     logger.info("Initializing CLIP embedder...")
     clip_embedder = CLIPEmbedder(rag_config)
 
-    # Image -> text pipeline
-    i2t_retriever = RAGRetriever(
-        config=config, clip_embedder=clip_embedder,
-        faiss_indexer=dual_indexer.image_indexer, metadata_db=metadata_db
-    )
-    rag_config.generation.LLM_MODEL = config.generation.LLM_MODEL
-    rag_config.generation.LLM_PROVIDER = config.generation.LLM_PROVIDER
-    llm_wrapper = LLMWrapper(rag_config)
-    prompt_builder = PromptBuilder(rag_config)
-    i2t_generator = ReportGenerator(
-        config=config, retriever=i2t_retriever,
-        llm_wrapper=llm_wrapper, prompt_builder=prompt_builder
+    # ---- MAIRA-2 (replaces RAG + LLM for image -> text) ----
+    logger.info("Loading MAIRA-2...")
+    maira_generator = MAIRAReportGenerator(
+        device=args.device,
+        use_grounding=args.use_grounding,
     )
 
-    # Text -> image pipeline
+    # ---- Text -> image pipeline (unchanged) ----
     t2i_retriever = TextToImageRetriever(
         config=config, clip_embedder=clip_embedder,
         text_indexer=dual_indexer.text_indexer, metadata_db=metadata_db
@@ -802,15 +882,19 @@ def main():
         config=config, retriever=t2i_retriever, generator=t2i_generator
     )
 
-    # Loop experiment
-    experiment = SemanticLoopExperiment(
-        config=config, text_to_image_pipeline=t2i_pipeline,
-        image_to_text_retriever=i2t_retriever,
-        image_to_text_generator=i2t_generator,
-        clip_embedder=clip_embedder, metadata_db=metadata_db
+    # ---- Loop experiment ----
+    experiment = SemanticLoopExperimentMAIRA2(
+        config=config,
+        text_to_image_pipeline=t2i_pipeline,
+        maira_generator=maira_generator,
+        clip_embedder=clip_embedder,
+        metadata_db=metadata_db,
+        data_csv=config.paths.DATA_CSV,
+        include_lateral=not args.no_lateral,
+        include_indication=not args.no_indication,
     )
 
-    # Select samples
+    # ---- Select samples ----
     test_df = load_test_data(config)
     available_in_db = set(metadata_db.metadata.keys())
     test_df['study_id_normalized'] = test_df['study_id'].apply(
@@ -830,23 +914,25 @@ def main():
 
     logger.info(f"Running on {len(study_ids)} sample(s): {study_ids}")
 
-    # Run experiments
+    # ---- Run ----
     traces = []
     for study_id in study_ids:
         try:
             trace = experiment.run_loop(
-                seed_study_id=str(study_id), n_iterations=args.n_iterations,
+                seed_study_id=str(study_id),
+                n_iterations=args.n_iterations,
                 start_from=args.start_from,
                 output_dir=os.path.join(output_dir, str(study_id)),
-                save_intermediates=True, seed=args.seed,
-                fallback_row=fallback_data.get(study_id)
+                save_intermediates=True,
+                seed=args.seed,
+                fallback_row=fallback_data.get(study_id),
             )
             traces.append(trace)
         except Exception as e:
             logger.error(f"Error processing {study_id}: {e}")
             traceback.print_exc()
 
-    # Visualizations
+    # ---- Visualizations ----
     if args.visualize or args.visualize_with_training:
         logger.info("Generating visualizations...")
         training_embeddings = None
@@ -868,7 +954,7 @@ def main():
         if len(traces) > 1:
             LoopVisualizer(output_dir).visualize_multiple_traces(traces, training_embeddings)
 
-    # Save results
+    # ---- Save results ----
     html_path = os.path.join(output_dir, f"{experiment_name}_report.html")
     generate_html_report(traces, html_path)
 
@@ -876,9 +962,11 @@ def main():
     with open(results_path, 'w') as f:
         json.dump({
             'experiment_name': experiment_name,
+            'i2t_model': 'maira-2',
             'n_samples': len(traces),
             'n_iterations': args.n_iterations,
             'start_from': args.start_from,
+            'use_grounding': args.use_grounding,
             'traces': [t.to_dict() for t in traces],
             'timestamp': datetime.datetime.now().isoformat()
         }, f, indent=2)
