@@ -5,6 +5,7 @@ Tracks semantic drift via CLIP embeddings, BLEU scores, and CheXpert label prese
 """
 
 import os
+os.environ['HF_HOME'] = '/n/groups/training/bmif203/AIM2/.cache'
 import shutil
 import argparse
 import logging

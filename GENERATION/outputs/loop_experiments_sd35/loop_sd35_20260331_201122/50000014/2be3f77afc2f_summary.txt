@@ -1,0 +1,35 @@
+Loop Experiment Summary (MAIRA-2)
+============================================================
+
+Trace ID: 2be3f77afc2f
+Seed Study: 50000014
+Start From: report
+I2T Model: MAIRA-2 (microsoft/maira-2)
+Iterations: 5
+Steps: 11
+
+GT Labels (2 positive):
+  + Cardiomegaly
+  + Lung Opacity
+
+GT Findings: Lung volumes are low. Retrocardiac opacity with silhouetting of the left hemidiaphragm and lateral border of the descending aorta is nonspecific and could reflect any of a combination of atelectasis, ...
+GT Impression: 1. Nonspecific retrocardiac and right middle lobe opacities could reflect atelectasis and/or infection in the appropriate clinical situation. 2. There is cardiomegaly without CHF....
+
+Metrics:
+----------------------------------------
+n_steps: 11
+total_generation_time: 75.0798
+i2t_model: maira-2
+gt_positive_labels: ['Cardiomegaly', 'Lung Opacity']
+text_embedding_drift_cosine: [0.0, 0.0, 0.8563, 0.8563, 1.0586, 1.0586, 1.2442, 1.2442, 1.2375, 1.2375, 1.2254]
+text_embedding_drift_l2: [0.0, 0.0, 1.3087, 1.3087, 1.455, 1.455, 1.5775, 1.5775, 1.5732, 1.5732, 1.5655]
+image_embedding_drift_cosine: [0.0, 1.1777, 1.1777, 1.0833, 1.0833, 0.8507, 0.8507, 1.0463, 1.0463, 1.1856, 1.1856]
+image_embedding_drift_l2: [0.0, 1.5347, 1.5347, 1.4719, 1.4719, 1.3044, 1.3044, 1.4466, 1.4466, 1.5399, 1.5399]
+bleu_scores: [0.0, 0.0002, 0.0001, 0.0, 0.001]
+chexpert_recall_over_iterations: [0.0, 0.0, 0.0, 0.0, 0.0]
+chexpert_precision_over_iterations: [0.0, 0.0, 0.0, 0.0, 0.0]
+chexpert_jaccard_over_iterations: [0.0, 0.0, 0.0, 0.0, 0.0]
+per_label_preservation: {'Cardiomegaly': [0, 0, 0, 0, 0], 'Lung Opacity': [0, 0, 0, 0, 0]}
+label_avg_preservation: {'Cardiomegaly': 0.0, 'Lung Opacity': 0.0}
+best_preserved_label: Cardiomegaly
+worst_preserved_label: Cardiomegaly

@@ -284,3 +284,119 @@ class TextToImagePipeline:
             seed=seed or self.generator.seed,
             strength=actual_strength
         )
+
+
+class SD35LoRAImageGenerator:
+    """Medical image generator using SD3.5 Medium fine-tuned with LoRA on MIMIC-CXR.
+
+    Drop-in replacement for DiffusionImageGenerator in any TextToImagePipeline.
+    The LoRA was trained text-only (MMDiT transformer only; text encoders frozen),
+    so generate_image_guided falls back to text-only with a warning.
+
+    Prompt format must match training exactly:
+        "FINDINGS: <findings> IMPRESSION: <impression>"
+    """
+
+    DEFAULT_MODEL_ID = "stabilityai/stable-diffusion-3.5-medium"
+    DEFAULT_LORA_PATH = (
+        "/n/groups/training/bmif203/AIM2/Experiments/finetune_lora/"
+        "outputs/final_lora_weights/pytorch_lora_weights.safetensors"
+    )
+
+    def __init__(
+        self,
+        config,
+        lora_weights_path: Optional[str] = None,
+        model_id: Optional[str] = None,
+        device: str = "cuda",
+        num_inference_steps: int = 28,
+        guidance_scale: float = 7.0,
+        image_size: int = 768,
+    ):
+        self.config = config
+        self.model_id = model_id or self.DEFAULT_MODEL_ID
+        self.lora_weights_path = lora_weights_path or self.DEFAULT_LORA_PATH
+        self.device = device
+        self.num_inference_steps = num_inference_steps
+        self.guidance_scale = guidance_scale
+        self.image_size = image_size
+        self.default_strength = 0.0  # text-only; kept for interface compatibility
+        self.seed = getattr(getattr(config, 'system', None), 'SEED', 42)
+        self.pipe = None
+        logger.info(
+            f"SD35LoRAImageGenerator initialized | model: {self.model_id} | "
+            f"lora: {self.lora_weights_path}"
+        )
+
+    def load_model(self):
+        from diffusers import StableDiffusion3Pipeline
+        # On HPC compute nodes there is no outbound internet — use the local cache only.
+        # If the model is not yet cached, run the download command from a login node first.
+        logger.info(f"Loading SD3.5 Medium from: {self.model_id}")
+        self.pipe = StableDiffusion3Pipeline.from_pretrained(
+            self.model_id,
+            torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+            local_files_only=True,
+        )
+        self.pipe = self.pipe.to(self.device)
+
+        if self.lora_weights_path and os.path.exists(self.lora_weights_path):
+            logger.info(f"Loading LoRA weights from: {self.lora_weights_path}")
+            self.pipe.load_lora_weights(self.lora_weights_path)
+        else:
+            logger.warning(
+                f"LoRA weights not found at {self.lora_weights_path} — running base SD3.5"
+            )
+
+        if self.device == "cuda":
+            self.pipe.enable_attention_slicing()
+            try:
+                self.pipe.enable_xformers_memory_efficient_attention()
+            except Exception:
+                pass
+
+        logger.info("SD3.5 LoRA loaded")
+
+    def _build_prompt(self, findings: str, impression: str) -> str:
+        """Matches training prompt format exactly."""
+        f = (findings or "").strip()
+        i = (impression or "").strip()
+        return f"FINDINGS: {f} IMPRESSION: {i}"
+
+    def generate_text_only(
+        self,
+        findings: str,
+        impression: str,
+        seed: Optional[int] = None,
+    ) -> Image.Image:
+        if self.pipe is None:
+            self.load_model()
+        prompt = self._build_prompt(findings, impression)
+        generator = torch.Generator(device=self.device).manual_seed(seed or self.seed)
+        with torch.autocast(self.device):
+            result = self.pipe(
+                prompt=prompt,
+                num_inference_steps=self.num_inference_steps,
+                guidance_scale=self.guidance_scale,
+                height=self.image_size,
+                width=self.image_size,
+                generator=generator,
+            )
+        return result.images[0].convert('L')
+
+    def generate_image_guided(
+        self,
+        findings: str,
+        impression: str,
+        reference_image: Union[str, Image.Image],
+        strength: Optional[float] = None,
+        seed: Optional[int] = None,
+    ) -> Image.Image:
+        """LoRA was trained text-only — reference image is ignored."""
+        logger.warning(
+            "SD35LoRAImageGenerator was trained text-only; reference image ignored."
+        )
+        return self.generate_text_only(findings, impression, seed=seed)
+
+    def __repr__(self):
+        return f"SD35LoRAImageGenerator(model={self.model_id}, device={self.device})"
