@@ -53,8 +53,26 @@ class CLIPEmbedder:
         if clip_config is None:
             clip_config = CLIPConfig()
 
-        model = MedicalCLIP(clip_config)
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
+
+        # Infer the image size the model was trained with from the pos_embed shape.
+        # pos_embed: [1, num_tokens, dim] where num_tokens = (img_size // patch_size)^2 + 1
+        # vit_base_patch16 uses patch_size=16.
+        state = checkpoint['model_state_dict']
+        pos_embed_key = next(
+            (k for k in state if 'pos_embed' in k and 'image_encoder' in k), None
+        )
+        if pos_embed_key is not None:
+            num_tokens = state[pos_embed_key].shape[1]
+            inferred_img_size = int((num_tokens - 1) ** 0.5) * 16
+            if inferred_img_size != clip_config.data.IMAGE_SIZE:
+                logger.info(
+                    f"Checkpoint pos_embed has {num_tokens} tokens → img_size={inferred_img_size}px. "
+                    f"Overriding CLIPConfig IMAGE_SIZE {clip_config.data.IMAGE_SIZE} → {inferred_img_size}."
+                )
+                clip_config.data.IMAGE_SIZE = inferred_img_size
+
+        model = MedicalCLIP(clip_config)
         model.load_state_dict(checkpoint['model_state_dict'])
 
         logger.info(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")

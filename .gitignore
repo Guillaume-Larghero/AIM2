@@ -7,6 +7,7 @@ dataset/physionet.org/
 
 # Logs folder
 GENERATION/scripts/logs/
+CLIP/scripts/logs
 *.log
 
 # Python cache
@@ -28,4 +29,4 @@ __pycache__/
 Experiments/
 
 
-models/
+models/CLIP/scripts/logs/

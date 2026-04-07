@@ -1,4 +1,12 @@
-"""Image and text encoders, projection heads, and CheXpert classification head."""
+"""Image and text encoders, projection heads, and CheXpert classification head.
+
+Change from original:
+  timm.create_model() now receives img_size=config.data.IMAGE_SIZE (512).
+  timm interpolates pretrained 14×14 pos-embeddings (196 tokens) → 32×32
+  (1024 tokens). Patch projection and attention weights reused as-is.
+  IMAGE_FEATURE_DIM stays 768 (ViT-B hidden dim, resolution-independent).
+  AttentionPool is resolution-agnostic: it scores over token dim D, not count.
+"""
 
 import torch
 import torch.nn as nn
@@ -12,29 +20,31 @@ class ImageEncoder(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-
         self.model_name = config.model.IMAGE_ENCODER
         self.use_attention_pooling = config.model.USE_ATTENTION_POOLING
         self.feature_dim = config.model.IMAGE_FEATURE_DIM
+        self._shape_checked = False
 
         if self.model_name.startswith('vit'):
+            # img_size makes timm interpolate pos-embeddings at construction time.
+            # global_pool='' returns ALL tokens: shape (B, 1+n_patches, D).
+            #   224px → (B, 197, 768)    512px → (B, 1025, 768)
             self.encoder = timm.create_model(
                 self.model_name,
                 pretrained=config.model.IMAGE_PRETRAINED,
                 num_classes=0,
                 global_pool='',
+                img_size=config.data.IMAGE_SIZE,
             )
             if self.use_attention_pooling:
                 self.attention_pool = AttentionPool(
                     self.feature_dim,
                     config.model.ATTENTION_POOL_HIDDEN_DIM_RATIO,
                 )
-
         elif self.model_name in ('resnet50', 'resnet18'):
             resnet_fn = models.resnet50 if self.model_name == 'resnet50' else models.resnet18
             resnet = resnet_fn(pretrained=config.model.IMAGE_PRETRAINED)
             self.encoder = nn.Sequential(*list(resnet.children())[:-2])
-
             if self.use_attention_pooling:
                 self.attention_pool = SpatialAttentionPool(
                     self.feature_dim,
@@ -45,12 +55,19 @@ class ImageEncoder(nn.Module):
         else:
             raise ValueError(f"Unknown image encoder: {self.model_name}")
 
-        print(f"Image Encoder: {self.model_name} (dim={self.feature_dim}, "
-              f"attention_pool={self.use_attention_pooling})")
+        n_patches = (config.data.IMAGE_SIZE // 16) ** 2
+        print(f"[ImageEncoder] {self.model_name} @ {config.data.IMAGE_SIZE}px | "
+              f"{n_patches} patch tokens + 1 CLS = {n_patches+1} total | "
+              f"dim={self.feature_dim} | attention_pool={self.use_attention_pooling}")
 
     def forward(self, images):
-        """(B, 3, H, W) -> (B, feature_dim)"""
+        """(B, 3, H, W) → (B, feature_dim)"""
         features = self.encoder(images)
+
+        if not self._shape_checked:
+            print(f"[ImageEncoder] first forward | input {tuple(images.shape)} "
+                  f"→ tokens {tuple(features.shape)}")
+            self._shape_checked = True
 
         if self.use_attention_pooling:
             features = self.attention_pool(features)
@@ -63,7 +80,11 @@ class ImageEncoder(nn.Module):
 
 
 class AttentionPool(nn.Module):
-    """Learned attention pooling over ViT patch tokens."""
+    """Learned attention pooling over ViT patch tokens.
+
+    Resolution-agnostic: the MLP scores over dim D (768), not the token count.
+    Works identically for 197 tokens (224px) or 1025 tokens (512px).
+    """
 
     def __init__(self, feature_dim, hidden_dim_ratio=0.25):
         super().__init__()
@@ -75,7 +96,7 @@ class AttentionPool(nn.Module):
         )
 
     def forward(self, x):
-        """(B, num_patches, D) -> (B, D)"""
+        """(B, n_tokens, D) → (B, D)"""
         attn_weights = torch.softmax(self.attention(x), dim=1)
         return (x * attn_weights).sum(dim=1)
 
@@ -95,10 +116,8 @@ class SpatialAttentionPool(nn.Module):
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
 
     def forward(self, x):
-        """(B, C, H, W) -> (B, C)"""
-        attn_map = self.attention_conv(x)
-        attended = x * attn_map
-        return self.global_pool(attended).flatten(1)
+        """(B, C, H, W) → (B, C)"""
+        return self.global_pool(x * self.attention_conv(x)).flatten(1)
 
 
 class TextEncoder(nn.Module):
@@ -106,7 +125,6 @@ class TextEncoder(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-
         self.model_name = config.model.TEXT_ENCODER
         self.use_last_n_layers = config.model.TEXT_NUM_LAYERS
         self.feature_dim = config.model.TEXT_FEATURE_DIM
@@ -115,28 +133,25 @@ class TextEncoder(nn.Module):
             self.model_name,
             output_hidden_states=True,
         )
-
         if self.use_last_n_layers > 1:
             self.layer_weights = nn.Parameter(torch.ones(self.use_last_n_layers))
 
-        print(f"Text Encoder: {self.model_name} (dim={self.feature_dim}, "
-              f"fused_layers={self.use_last_n_layers})")
+        print(f"[TextEncoder] {self.model_name} | dim={self.feature_dim} | "
+              f"fused_layers={self.use_last_n_layers}")
 
     def forward(self, input_ids, attention_mask):
-        """(B, seq_len) -> (B, feature_dim)"""
+        """(B, seq_len) → (B, feature_dim)"""
         outputs = self.encoder(
             input_ids=input_ids,
             attention_mask=attention_mask,
             return_dict=True,
         )
-
         if self.use_last_n_layers > 1:
             hidden_states = outputs.hidden_states[-self.use_last_n_layers:]
             cls_embeddings = torch.stack([h[:, 0, :] for h in hidden_states], dim=0)
             weights = torch.softmax(self.layer_weights, dim=0)
             return (cls_embeddings * weights.view(-1, 1, 1)).sum(dim=0)
-        else:
-            return outputs.last_hidden_state[:, 0, :]
+        return outputs.last_hidden_state[:, 0, :]
 
 
 class ProjectionHead(nn.Module):
@@ -144,46 +159,34 @@ class ProjectionHead(nn.Module):
 
     def __init__(self, config, input_dim=None):
         super().__init__()
-
         if input_dim is None:
             input_dim = config.model.PROJECTION_DIM
 
         hidden_dim = config.model.PROJECTION_HIDDEN_DIM
         output_dim = config.model.PROJECTION_DIM
-        dropout = config.model.PROJECTION_DROPOUT
+        dropout    = config.model.PROJECTION_DROPOUT
         num_layers = config.model.PROJECTION_NUM_LAYERS
         self.normalize = config.model.NORMALIZE_EMBEDDINGS
 
         layers = []
         for i in range(num_layers):
             if i == 0:
-                layers.extend([
-                    nn.Linear(input_dim, hidden_dim),
-                    nn.LayerNorm(hidden_dim),
-                    nn.GELU(),
-                    nn.Dropout(dropout),
-                ])
+                layers.extend([nn.Linear(input_dim, hidden_dim), nn.LayerNorm(hidden_dim),
+                                nn.GELU(), nn.Dropout(dropout)])
             elif i == num_layers - 1:
                 layers.append(nn.Linear(hidden_dim, output_dim))
             else:
-                layers.extend([
-                    nn.Linear(hidden_dim, hidden_dim),
-                    nn.LayerNorm(hidden_dim),
-                    nn.GELU(),
-                    nn.Dropout(dropout),
-                ])
+                layers.extend([nn.Linear(hidden_dim, hidden_dim), nn.LayerNorm(hidden_dim),
+                                nn.GELU(), nn.Dropout(dropout)])
 
         self.mlp = nn.Sequential(*layers)
+        self.residual = nn.Identity() if input_dim == output_dim else nn.Linear(input_dim, output_dim)
 
-        if input_dim == output_dim:
-            self.residual = nn.Identity()
-        else:
-            self.residual = nn.Linear(input_dim, output_dim)
-
-        print(f"Projection: {input_dim} -> {hidden_dim} -> {output_dim} ({num_layers} layers)")
+        print(f"[ProjectionHead] {input_dim} → {hidden_dim} → {output_dim} "
+              f"({num_layers} layers, normalize={self.normalize})")
 
     def forward(self, x):
-        """(B, input_dim) -> (B, output_dim), optionally L2-normalized."""
+        """(B, input_dim) → (B, output_dim), L2-normalized."""
         embeddings = self.mlp(x) + self.residual(x)
         if self.normalize:
             embeddings = nn.functional.normalize(embeddings, p=2, dim=1)
@@ -195,22 +198,18 @@ class CheXpertHead(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-
-        input_dim = config.model.PROJECTION_DIM
+        input_dim  = config.model.PROJECTION_DIM
         num_labels = config.model.NUM_CHEXPERT_LABELS
         hidden_dim = int(input_dim * config.model.CHEXPERT_HIDDEN_DIM_RATIO)
-        dropout = config.model.PROJECTION_DROPOUT
+        dropout    = config.model.PROJECTION_DROPOUT
 
         self.classifier = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
+            nn.Linear(input_dim, hidden_dim), nn.LayerNorm(hidden_dim),
+            nn.ReLU(), nn.Dropout(dropout),
             nn.Linear(hidden_dim, num_labels),
         )
-
-        print(f"CheXpert Head: {input_dim} -> {hidden_dim} -> {num_labels}")
+        print(f"[CheXpertHead] {input_dim} → {hidden_dim} → {num_labels}")
 
     def forward(self, embeddings):
-        """(B, input_dim) -> (B, num_labels) raw logits."""
+        """(B, input_dim) → (B, num_labels) raw logits."""
         return self.classifier(embeddings)
