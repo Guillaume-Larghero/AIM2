@@ -1,16 +1,21 @@
-"""Bidirectional generation loop experiment using MAIRA-2 (I→T) + SD3.5 LoRA (T→I).
+"""Bidirectional generation loop experiment using MAIRA-2 (I→T) + FLUX.2 LoRA (T→I).
 
-Replaces RoentGen-v2 with the SD3.5 Medium model fine-tuned via LoRA on MIMIC-CXR.
-The image-to-text half (MAIRA-2) is unchanged from run_loop_experiment_maira2.py.
+FLUX.2-dev is fine-tuned with LoRA on MIMIC-CXR findings.  The image-to-text
+half (MAIRA-2) is unchanged from run_loop_experiment_maira2.py.
 
-Loop:  Report -> SD3.5-LoRA Image -> MAIRA-2 Report -> ... (N iterations)
+Loop:  Report -> FLUX.2-LoRA Image -> MAIRA-2 Report -> ... (N iterations)
 
-Tracks semantic drift via CLIP embeddings, BLEU scores, and CheXpert label preservation.
+Prompt alignment: MAIRA-2 outputs findings only; FLUX.2 was trained on findings only.
+The Medical CLIP model tracks semantic drift (text/image embeddings) per iteration.
+
+Requires diffusers main branch for Flux2Pipeline:
+    pip uninstall diffusers -y
+    pip install git+https://github.com/huggingface/diffusers -U
 
 Usage:
-    python -m GENERATION.scripts.run_loop_experiment_sd35 \\
+    python -m GENERATION.scripts.run_loop_experiment_flux2 \\
         --study_id 50000014 --n_iterations 5 --start_from report \\
-        --lora_weights /n/groups/training/bmif203/AIM2/Experiments/finetune_lora/outputs/final_lora_weights/pytorch_lora_weights.safetensors \\
+        --lora_checkpoint /n/groups/training/bmif203/AIM2/Experiments/finetune_lora/outputs/checkpoint-004000/pytorch_lora_weights.safetensors \\
         --visualize
 """
 
@@ -23,13 +28,10 @@ import logging
 import random
 import time
 import traceback
-from pathlib import Path
-
-import numpy as np
 
 from GENERATION.config.config import GenerationPipelineConfig
 from GENERATION.pipeline.text_to_image import (
-    TextToImageRetriever, SD35LoRAImageGenerator, TextToImagePipeline
+    TextToImageRetriever, Flux2LoRAImageGenerator, TextToImagePipeline
 )
 from GENERATION.utils.utils import load_test_data
 from RAG.config.config import RAGConfig
@@ -38,15 +40,13 @@ from RAG.indexing.dual_indexer import DualFaissIndexer
 from RAG.metadata.metadata_db import MetadataDB
 from MAIRA.maira import MAIRAReportGenerator
 
-# Import experiment infrastructure from the MAIRA-2 script
+# Reuse all experiment infrastructure from the MAIRA-2 script
 from GENERATION.scripts.run_loop_experiment_maira2 import (
     SemanticLoopExperimentMAIRA2,
     LoopStep,
-    LoopTrace,
     LoopVisualizer,
     generate_html_report,
     normalize_study_id,
-    CHEXPERT_LABELS,
 )
 
 try:
@@ -56,40 +56,43 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-SD35_DEFAULT_LORA_PATH = (
-    "/n/groups/training/bmif203/AIM2/Experiments/finetune_lora_SD35/"
-    "final_lora_weights/pytorch_lora_weights.safetensors"
+FLUX2_DEFAULT_LORA_PATH = (
+    "/n/groups/training/bmif203/AIM2/Experiments/finetune_lora/"
+    "outputs/checkpoint-006000/pytorch_lora_weights.safetensors"
 )
 
 
-class SemanticLoopExperimentSD35(SemanticLoopExperimentMAIRA2):
-    """Loop experiment with MAIRA-2 (I→T) and SD3.5 LoRA (T→I).
+class SemanticLoopExperimentFlux2(SemanticLoopExperimentMAIRA2):
+    """Loop experiment with MAIRA-2 (I→T) and FLUX.2 LoRA (T→I).
 
     Inherits all metrics, visualization hooks, and loop logic from
     SemanticLoopExperimentMAIRA2. _step_t2i and _step_i2t are both overridden
-    to swap MAIRA-2 between CPU and GPU, keeping GPU headroom for SD3.5.
+    to swap models between CPU and GPU — FLUX.2 transformer (~64 GB) and
+    MAIRA-2 (~24 GB) cannot both reside on an 80 GB H100 simultaneously.
     """
 
     def _offload_maira(self):
+        """Move MAIRA-2 to CPU and free GPU cache before FLUX.2 runs."""
         import torch
         self.maira.model = self.maira.model.to('cpu')
         torch.cuda.empty_cache()
         logger.info("  [mem] MAIRA-2 offloaded to CPU")
 
     def _restore_maira(self):
+        """Move MAIRA-2 back to GPU before I→T step."""
         self.maira.model = self.maira.model.to(self.maira.device)
         logger.info("  [mem] MAIRA-2 restored to GPU")
 
     def _step_t2i(self, findings, impression, iteration, output_dir,
                   save_image, seed) -> LoopStep:
+        # Free MAIRA-2 VRAM before loading FLUX.2 (~64 GB transformer).
         self._offload_maira()
+
         t0 = time.time()
         save_path = (
             os.path.join(output_dir, f"iter{iteration}_generated.png")
             if save_image else None
         )
-        # SD3.5 LoRA is text-only — no reference image retrieval needed for generation.
-        # The retriever still runs so retrieved_study_ids are logged in the trace.
         result = self.t2i_pipeline.generate(
             findings=findings,
             impression=impression,
@@ -110,17 +113,18 @@ class SemanticLoopExperimentSD35(SemanticLoopExperimentMAIRA2):
         step.text_embedding = self._text_embedding(findings, impression).tolist()
         if result.generated_image_path and os.path.exists(result.generated_image_path):
             step.image_embedding = self._image_embedding(result.generated_image_path).tolist()
-        logger.info(f"  [T->I] SD3.5 LoRA generated in {dt:.2f}s")
+        logger.info(f"  [T->I] FLUX.2 LoRA generated in {dt:.2f}s")
         return step
 
     def _step_i2t(self, image_path: str, iteration: int) -> LoopStep:
+        # Restore MAIRA-2 to GPU before inference.
         self._restore_maira()
         return super()._step_i2t(image_path, iteration)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Bidirectional Loop Experiment: MAIRA-2 (I→T) + SD3.5 LoRA (T→I)"
+        description="Bidirectional Loop Experiment: MAIRA-2 (I→T) + FLUX.2 LoRA (T→I)"
     )
     parser.add_argument('--study_id', type=str, default=None)
     parser.add_argument('--n_samples', type=int, default=1)
@@ -131,17 +135,17 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--device', type=str, default='cuda',
                         help='PyTorch device, e.g. cuda, cuda:3, cpu')
-    # SD3.5 LoRA options
-    parser.add_argument('--lora_weights', type=str, default=SD35_DEFAULT_LORA_PATH,
-                        help='Path to pytorch_lora_weights.safetensors')
-    parser.add_argument('--sd35_model_id', type=str,
-                        default='stabilityai/stable-diffusion-3.5-medium',
-                        help='SD3.5 base model ID or local path')
-    parser.add_argument('--sd35_steps', type=int, default=28,
+    # FLUX.2 options
+    parser.add_argument('--lora_checkpoint', type=str, default=FLUX2_DEFAULT_LORA_PATH,
+                        help='Path to pytorch_lora_weights.safetensors for FLUX.2')
+    parser.add_argument('--flux2_model_id', type=str,
+                        default='black-forest-labs/FLUX.2-dev',
+                        help='FLUX.2 base model ID or local path')
+    parser.add_argument('--flux2_steps', type=int, default=28,
                         help='Number of diffusion inference steps')
-    parser.add_argument('--sd35_guidance', type=float, default=7.0,
-                        help='Classifier-free guidance scale')
-    parser.add_argument('--sd35_resolution', type=int, default=768,
+    parser.add_argument('--flux2_guidance', type=float, default=3.5,
+                        help='Classifier-free guidance scale (3.5–4 recommended for FLUX.2)')
+    parser.add_argument('--flux2_resolution', type=int, default=512,
                         help='Output image resolution (square)')
     # MAIRA-2 options
     parser.add_argument('--use_grounding', action='store_true',
@@ -170,9 +174,9 @@ def main():
         config.system.DEVICE = args.device
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    experiment_name = args.experiment_name or f"loop_sd35_{timestamp}"
+    experiment_name = args.experiment_name or f"loop_flux2_{timestamp}"
     output_dir = args.output_dir or os.path.join(
-        config.paths.OUTPUT_DIR, "loop_experiments_sd35", experiment_name
+        config.paths.OUTPUT_DIR, "loop_experiments_flux2", experiment_name
     )
     os.makedirs(output_dir, exist_ok=True)
     logger.info(f"Output: {output_dir}")
@@ -201,16 +205,16 @@ def main():
         use_grounding=args.use_grounding,
     )
 
-    # ---- SD3.5 LoRA (T→I) ----
-    logger.info(f"Initializing SD3.5 LoRA generator | lora: {args.lora_weights}")
-    t2i_generator = SD35LoRAImageGenerator(
+    # ---- FLUX.2 LoRA (T→I) ----
+    logger.info(f"Initializing FLUX.2 LoRA generator | lora: {args.lora_checkpoint}")
+    t2i_generator = Flux2LoRAImageGenerator(
         config=config,
-        lora_weights_path=args.lora_weights,
-        model_id=args.sd35_model_id,
+        lora_weights_path=args.lora_checkpoint,
+        model_id=args.flux2_model_id,
         device=args.device,
-        num_inference_steps=args.sd35_steps,
-        guidance_scale=args.sd35_guidance,
-        image_size=args.sd35_resolution,
+        num_inference_steps=args.flux2_steps,
+        guidance_scale=args.flux2_guidance,
+        image_size=args.flux2_resolution,
     )
     t2i_retriever = TextToImageRetriever(
         config=config, clip_embedder=clip_embedder,
@@ -221,7 +225,7 @@ def main():
     )
 
     # ---- Loop experiment ----
-    experiment = SemanticLoopExperimentSD35(
+    experiment = SemanticLoopExperimentFlux2(
         config=config,
         text_to_image_pipeline=t2i_pipeline,
         maira_generator=maira_generator,
@@ -234,7 +238,6 @@ def main():
 
     # ---- Select samples ----
     test_df = load_test_data(config)
-    available_in_db = set(metadata_db.metadata.keys())
     test_df['study_id_normalized'] = test_df['study_id'].apply(
         lambda x: normalize_study_id(x, add_prefix=False)
     )
@@ -304,12 +307,12 @@ def main():
         json.dump({
             'experiment_name': experiment_name,
             'i2t_model': 'maira-2',
-            't2i_model': 'sd35-lora',
-            'lora_weights': args.lora_weights,
-            'sd35_model_id': args.sd35_model_id,
-            'sd35_steps': args.sd35_steps,
-            'sd35_guidance': args.sd35_guidance,
-            'sd35_resolution': args.sd35_resolution,
+            't2i_model': 'flux2-lora',
+            'lora_checkpoint': args.lora_checkpoint,
+            'flux2_model_id': args.flux2_model_id,
+            'flux2_steps': args.flux2_steps,
+            'flux2_guidance': args.flux2_guidance,
+            'flux2_resolution': args.flux2_resolution,
             'n_samples': len(traces),
             'n_iterations': args.n_iterations,
             'start_from': args.start_from,

@@ -116,10 +116,10 @@ class MAIRAReportGenerator:
 
         logger.info(f"Loading MAIRA-2 ({model_name}) on {self.device} …")
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_name, trust_remote_code=True
+            model_name, trust_remote_code=True, local_files_only=True
         )
         self.processor = AutoProcessor.from_pretrained(
-            model_name, trust_remote_code=True
+            model_name, trust_remote_code=True, local_files_only=True
         )
         self.model = self.model.eval().to(self.device)
         logger.info("MAIRA-2 ready.")

@@ -16,6 +16,36 @@ from diffusers import DiffusionPipeline, StableDiffusionImg2ImgPipeline, DPMSolv
 
 logger = logging.getLogger(__name__)
 
+
+def _remap_peft_lora_keys(lora_path: str, prefix: str = "transformer") -> dict:
+    """Convert PEFT-format LoRA keys to diffusers-format keys.
+
+    PEFT saves LoRA weights as "base_model.model.<layer>.lora_A.weight".
+    Diffusers' load_lora_weights() expects "<prefix>.<layer>.lora_A.weight".
+
+    Args:
+        lora_path: Path to the safetensors file.
+        prefix: The diffusers component prefix (e.g. "transformer").
+
+    Returns:
+        State dict with remapped keys, ready for pipe.load_lora_weights().
+    """
+    from safetensors.torch import load_file
+    state_dict = load_file(lora_path)
+    peft_prefix = "base_model.model."
+    remapped = {}
+    n_remapped = 0
+    for k, v in state_dict.items():
+        if k.startswith(peft_prefix):
+            new_k = f"{prefix}.{k[len(peft_prefix):]}"
+            remapped[new_k] = v
+            n_remapped += 1
+        else:
+            remapped[k] = v
+    logger.info(f"LoRA key remapping: {n_remapped}/{len(state_dict)} keys remapped to '{prefix}.*'")
+    return remapped
+
+
 DEFAULT_ROENTGEN_PATH = "/n/groups/training/bmif203/AIM2/models/RoentGen-v2" # TO CHANGE FOR ROSHAN
 FALLBACK_HF_MODEL = "stanfordmimi/RoentGen-v2"
 
@@ -299,8 +329,8 @@ class SD35LoRAImageGenerator:
 
     DEFAULT_MODEL_ID = "stabilityai/stable-diffusion-3.5-medium"
     DEFAULT_LORA_PATH = (
-        "/n/groups/training/bmif203/AIM2/Experiments/finetune_lora/"
-        "outputs/final_lora_weights/pytorch_lora_weights.safetensors"
+        "/n/groups/training/bmif203/AIM2/Experiments/finetune_lora_SD35/"
+        "final_lora_weights/pytorch_lora_weights.safetensors"
     )
 
     def __init__(
@@ -342,7 +372,9 @@ class SD35LoRAImageGenerator:
 
         if self.lora_weights_path and os.path.exists(self.lora_weights_path):
             logger.info(f"Loading LoRA weights from: {self.lora_weights_path}")
-            self.pipe.load_lora_weights(self.lora_weights_path)
+            self.pipe.load_lora_weights(
+                _remap_peft_lora_keys(self.lora_weights_path, prefix="transformer")
+            )
         else:
             logger.warning(
                 f"LoRA weights not found at {self.lora_weights_path} — running base SD3.5"
@@ -400,3 +432,135 @@ class SD35LoRAImageGenerator:
 
     def __repr__(self):
         return f"SD35LoRAImageGenerator(model={self.model_id}, device={self.device})"
+
+
+class Flux2LoRAImageGenerator:
+    """Medical image generator using FLUX.2-dev fine-tuned with LoRA on MIMIC-CXR.
+
+    Drop-in replacement for DiffusionImageGenerator in any TextToImagePipeline.
+
+    Training details (from finetune_flux2_lora_cxr.py):
+      - Single text encoder: Mistral Small 3.1 (no CLIP-L / T5-XXL)
+      - Prompt format: "FINDINGS: <findings>" — impression deliberately excluded
+        (MAIRA-2 generates findings only; training/inference match is exact)
+      - Resolution: 512×512, bf16, guidance_scale=3.5 at inference
+      - LoRA rank 32 applied to Flux2Transformer2DModel
+
+    Requires diffusers main branch: pip install git+https://github.com/huggingface/diffusers
+    """
+
+    DEFAULT_MODEL_ID = "black-forest-labs/FLUX.2-dev"
+    DEFAULT_LORA_PATH = (
+        "/n/groups/training/bmif203/AIM2/Experiments/finetune_lora/"
+        "outputs/checkpoint-004000/pytorch_lora_weights.safetensors"
+    )
+
+    def __init__(
+        self,
+        config,
+        lora_weights_path: Optional[str] = None,
+        model_id: Optional[str] = None,
+        device: str = "cuda",
+        num_inference_steps: int = 28,
+        guidance_scale: float = 3.5,
+        image_size: int = 512,
+    ):
+        self.config = config
+        self.model_id = model_id or self.DEFAULT_MODEL_ID
+        self.lora_weights_path = lora_weights_path or self.DEFAULT_LORA_PATH
+        self.device = device
+        self.num_inference_steps = num_inference_steps
+        self.guidance_scale = guidance_scale
+        self.image_size = image_size
+        self.default_strength = 0.0  # text-only; kept for interface compatibility
+        self.seed = getattr(getattr(config, 'system', None), 'SEED', 42)
+        self.pipe = None
+        logger.info(
+            f"Flux2LoRAImageGenerator initialized | model: {self.model_id} | "
+            f"lora: {self.lora_weights_path}"
+        )
+
+    def load_model(self):
+        try:
+            from diffusers import Flux2Pipeline
+        except ImportError:
+            raise ImportError(
+                "Flux2Pipeline not found. FLUX.2-dev requires diffusers from the main branch.\n"
+                "Run: pip uninstall diffusers -y && "
+                "pip install git+https://github.com/huggingface/diffusers -U"
+            )
+        # Compute nodes have no outbound internet — model must be pre-cached from a login node.
+        logger.info(f"Loading FLUX.2-dev from: {self.model_id}")
+        self.pipe = Flux2Pipeline.from_pretrained(
+            self.model_id,
+            torch_dtype=torch.bfloat16,  # trained with bf16
+            local_files_only=True,
+        )
+
+        if self.lora_weights_path and os.path.exists(self.lora_weights_path):
+            logger.info(f"Loading LoRA weights from: {self.lora_weights_path}")
+            self.pipe.load_lora_weights(
+                _remap_peft_lora_keys(self.lora_weights_path, prefix="transformer")
+            )
+        else:
+            logger.warning(
+                f"LoRA weights not found at {self.lora_weights_path} — running base FLUX.2"
+            )
+
+        if self.device == "cuda":
+            # FLUX.2 transformer alone is ~64 GB. Use component-level CPU offloading so
+            # only one sub-model (VAE / transformer / text encoder) occupies GPU at a time.
+            # This avoids OOM when MAIRA-2 (~24 GB) is also present in the process.
+            gpu_id = 0
+            if self.device.startswith("cuda:"):
+                gpu_id = int(self.device.split(":")[1])
+            self.pipe.enable_model_cpu_offload(gpu_id=gpu_id)
+        else:
+            self.pipe = self.pipe.to(self.device)
+
+        logger.info("FLUX.2 LoRA loaded")
+
+    def _build_prompt(self, findings: str, impression: str) -> str:
+        """Matches training prompt format exactly — findings only, impression excluded."""
+        f = (findings or "").strip()
+        if not f:
+            return "No findings reported."
+        return f"FINDINGS: {f}"
+
+    def generate_text_only(
+        self,
+        findings: str,
+        impression: str,
+        seed: Optional[int] = None,
+    ) -> Image.Image:
+        if self.pipe is None:
+            self.load_model()
+        prompt = self._build_prompt(findings, impression)
+        generator = torch.Generator(device=self.device).manual_seed(seed or self.seed)
+        with torch.autocast(self.device, dtype=torch.bfloat16):
+            result = self.pipe(
+                prompt=prompt,
+                num_inference_steps=self.num_inference_steps,
+                guidance_scale=self.guidance_scale,
+                height=self.image_size,
+                width=self.image_size,
+                generator=generator,
+            )
+        return result.images[0].convert('L')
+
+    def generate_image_guided(
+        self,
+        findings: str,
+        impression: str,
+        reference_image: Union[str, Image.Image],
+        strength: Optional[float] = None,
+        seed: Optional[int] = None,
+    ) -> Image.Image:
+        """LoRA was trained text-only — reference image is ignored."""
+        logger.warning(
+            "Flux2LoRAImageGenerator was trained text-only; reference image ignored."
+        )
+        return self.generate_text_only(findings, impression, seed=seed)
+
+    def __repr__(self):
+        return f"Flux2LoRAImageGenerator(model={self.model_id}, device={self.device})"
