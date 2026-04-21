@@ -72,6 +72,9 @@ class CLIPEmbedder:
                 )
                 clip_config.data.IMAGE_SIZE = inferred_img_size
 
+        # Store the resolved size so _get_transform uses the correct crop size.
+        self._model_image_size = clip_config.data.IMAGE_SIZE
+
         model = MedicalCLIP(clip_config)
         model.load_state_dict(checkpoint['model_state_dict'])
 
@@ -79,10 +82,13 @@ class CLIPEmbedder:
         return model
 
     def _get_transform(self):
-        """Validation transform matching CLIP training: Resize(256, BICUBIC) -> CenterCrop(224)."""
+        """Validation transform matching CLIP training: Resize then CenterCrop to model size."""
+        crop_size = getattr(self, '_model_image_size', self.config.embedder.IMAGE_SIZE)
+        # Scale the resize proportionally (standard: resize to crop_size * 256/224).
+        resize_size = int(round(crop_size * 256 / 224))
         return transforms.Compose([
-            transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
-            transforms.CenterCrop(self.config.embedder.IMAGE_SIZE),
+            transforms.Resize(resize_size, interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.CenterCrop(crop_size),
             transforms.ToTensor(),
             transforms.Normalize(
                 mean=self.config.embedder.IMAGE_MEAN,

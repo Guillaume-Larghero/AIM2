@@ -611,25 +611,41 @@ class LoopVisualizer:
         plt.close()
 
     def _create_content_gallery(self, trace):
-        image_steps = [s for s in trace.steps if s.content_path and os.path.exists(s.content_path)]
+        import textwrap
+        # One image per sequential step: ground truth (iter 0) + one generated image per iteration.
+        image_steps = [
+            s for s in trace.steps
+            if s.content_path and os.path.exists(s.content_path)
+            and s.step_type in ('ground_truth', 'image')
+        ]
         if not image_steps:
             return
-        n = min(len(image_steps), 5)
-        fig, axes = plt.subplots(2, n, figsize=(4*n, 8))
+        n = len(image_steps)
+        fig, axes = plt.subplots(2, n, figsize=(4*n, 9))
         if n == 1:
             axes = np.array([[axes[0]], [axes[1]]])
-        for idx, step in enumerate(image_steps[:n]):
+        for idx, step in enumerate(image_steps):
             try:
                 img = Image.open(step.content_path)
                 axes[0, idx].imshow(img, cmap='gray')
-                axes[0, idx].set_title(f"Iter {step.iteration}", fontweight='bold')
+                axes[0, idx].set_title(f"Iter {idx}", fontweight='bold')
             except Exception:
                 axes[0, idx].text(0.5, 0.5, 'N/A', ha='center', va='center')
             axes[0, idx].axis('off')
-            txt = f"Findings:\n{step.findings[:150]}...\n\nImpression:\n{step.impression[:100]}..."
-            axes[1, idx].text(0.5, 0.5, txt, ha='center', va='center', fontsize=8,
-                              wrap=True, transform=axes[1, idx].transAxes)
+
+            findings_text = (step.findings or '').strip()
+            wrapped = textwrap.fill(findings_text, width=40)
+            if len(findings_text) > 300:
+                # Truncate at a word boundary and add ellipsis
+                wrapped = textwrap.fill(findings_text[:300], width=40) + '...'
+            axes[1, idx].text(
+                0.5, 1.0, wrapped,
+                ha='center', va='top', fontsize=6.5,
+                transform=axes[1, idx].transAxes,
+                multialignment='left',
+            )
             axes[1, idx].axis('off')
+
         plt.suptitle(f"Gallery (MAIRA-2) - {trace.seed_study_id}", fontsize=14, fontweight='bold')
         plt.tight_layout()
         plt.savefig(os.path.join(self.output_dir, f"{trace.trace_id}_gallery.png"),

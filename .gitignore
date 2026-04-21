@@ -23,7 +23,7 @@ __pycache__/
 .env_*
 
 # Outputs
-**/outputs/
+# **/outputs/
 
 #Experiments
 Experiments/
