@@ -648,17 +648,30 @@ def get_sigmas(
 # ──────────────────────────────────────────────────────────────────────────────
 
 FLUX2_LORA_TARGET_MODULES = [
-    "attn.to_q",        # image-stream Q  (8 double-stream blocks)
-    "attn.to_k",        # image-stream K
-    "attn.to_v",        # image-stream V
-    "attn.to_out.0",    # image-stream output
-    "attn.add_q_proj",  # cross-attn Q (text→image)
-    "attn.add_k_proj",  # cross-attn K
-    "attn.add_v_proj",  # cross-attn V
-    "attn.to_add_out",  # cross-attn output
+    # ── Double-stream: image-stream attention (8 blocks) ────────────
+    "attn.to_q",
+    "attn.to_k",
+    "attn.to_v",
+    "attn.to_out.0",           # double-stream uses Linear wrapped as Sequential[0]
+    # ── Double-stream: text (context) stream attention ───────────────
+    "attn.add_q_proj",
+    "attn.add_k_proj",
+    "attn.add_v_proj",
+    "attn.to_add_out",         # FLUX.2 name (was "add_out_proj" in FLUX.1 — WRONG)
+    # ── Double-stream: feed-forward (image stream) ───────────────────
+    "ff.linear_in",            # FLUX.2 name (was "ff.net.0.proj" — WRONG)
+    "ff.linear_out",           # FLUX.2 name (was "ff.net.2" — WRONG)
+    # ── Double-stream: feed-forward (text/context stream) ────────────
+    "ff_context.linear_in",    # FLUX.2 name (was "ff_context.net.0.proj" — WRONG)
+    "ff_context.linear_out",   # FLUX.2 name (was "ff_context.net.2" — WRONG)
+    # ── Single-stream: fused QKV+MLP projection (48 blocks) ──────────
+    "attn.to_qkv_mlp_proj",    # FLUX.2 name (was "proj_mlp" — WRONG)
+    # NOTE: "attn.to_out.0" already covers single-stream output.
+    # single_transformer_blocks.N.attn.to_out is a ModuleList([Linear, Dropout])
+    # — targeting the ModuleList directly raises a PEFT ValueError.
+    # "attn.to_out.0" matches the inner Linear in both double-stream and
+    # single-stream blocks (48 single × 1 + 8 double × 1 = 56 matches).
 ]
-# 8 blocks × 8 modules = 64 pairs = ~25M params
-# NO ff layers, NO fused single-stream layers
 
 # Lighter variant: attention only, no FF. Saves ~25% VRAM at cost of less adaptation.
 FLUX2_LORA_TARGET_ATTN_ONLY = [
@@ -734,39 +747,48 @@ def run_validation(
     val_dir = os.path.join(output_dir, "validation_samples", f"step_{step:06d}")
     os.makedirs(val_dir, exist_ok=True)
 
-    # ── SAFE VALIDATION — no training state corruption ────────────────
-    # DO NOT do: pipe.transformer = unwrapped_training_transformer
-    # enable_model_cpu_offload() installs AlignDevicesHook on whatever
-    # transformer is set on the pipe — if that's the training transformer,
-    # all subsequent training steps run through CPU, corrupting gradients.
+    # ── SAFE VALIDATION ──────────────────────────────────────────────
+    # Approach: convert PEFT state dict to diffusers format, then use
+    # pipe.load_lora_weights() on a fresh pipeline that already has
+    # enable_model_cpu_offload() applied to its BASE transformer.
     #
-    # Fix:
-    #   1. Move training transformer to CPU to free ~64 GB VRAM
-    #   2. Let val_pipe use its own fresh transformer with LoRA injected via PEFT
-    #   3. Restore training transformer to GPU after validation
-    from peft import get_peft_model as _get_peft_model
-    from peft.utils import (get_peft_model_state_dict as _get_state_dict,
-                            set_peft_model_state_dict as _set_state_dict)
+    # Why NOT: pipe.transformer = get_peft_model(...) then enable_model_cpu_offload()
+    #   → enable_model_cpu_offload calls remove_all_hooks() which calls
+    #     delattr(PeftModel, "_hf_hook") — PeftModel has no _hf_hook → AttributeError.
+    #
+    # Key conversion (PEFT → diffusers):
+    #   base_model.model.transformer_blocks.N.attn.to_q.lora_A.default.weight
+    #   → transformer.transformer_blocks.N.attn.to_q.lora_A.weight
+    from peft.utils import get_peft_model_state_dict as _get_state_dict
+    from safetensors.torch import save_file as _save_file
 
-    # Step 1: free GPU
+    def _peft_to_diffusers_keys(state_dict):
+        out = {}
+        for k, v in state_dict.items():
+            k = k.replace("base_model.model.", "transformer.")
+            k = k.replace(".lora_A.default.", ".lora_A.")
+            k = k.replace(".lora_B.default.", ".lora_B.")
+            out[k] = v
+        return out
+
+    # Step 1: offload training transformer to CPU (~64 GB freed)
     unwrapped = accelerator.unwrap_model(transformer)
     unwrapped.to("cpu")
     torch.cuda.empty_cache()
     logger.info("Training transformer offloaded to CPU (~64 GB freed)")
 
-    # Step 2: inject LoRA into val_pipe's own transformer
+    # Step 2: extract and convert LoRA weights
     lora_state = _get_state_dict(unwrapped)
-    peft_cfg = unwrapped.peft_config["default"]
-    val_lora_config = create_lora_config(
-        rank=peft_cfg.r,
-        alpha=peft_cfg.lora_alpha,
-        dropout=peft_cfg.lora_dropout,
-        attn_only=False,
-    )
-    pipe.transformer = _get_peft_model(pipe.transformer, val_lora_config)
-    _set_state_dict(pipe.transformer, lora_state)
-    pipe.transformer.eval()
+    lora_diffusers = _peft_to_diffusers_keys(lora_state)
+    _tmp_lora = os.path.join(val_dir, "_tmp_lora.safetensors")
+    _save_file({k: v.contiguous() for k, v in lora_diffusers.items()}, _tmp_lora)
+    logger.info(f"Saved {len(lora_diffusers)} LoRA tensors in diffusers format")
+
+    # Step 3: load_lora_weights onto a pipe whose transformer has no PEFT wrapper
+    # enable_model_cpu_offload() is safe here — transformer is plain nn.Module
     pipe.enable_model_cpu_offload()
+    pipe.load_lora_weights(_tmp_lora)
+    os.remove(_tmp_lora)
 
     for i, prompt in enumerate(VALIDATION_PROMPTS):
         result = pipe(
@@ -948,6 +970,15 @@ def train(args):
         dropout=args.lora_dropout,
         attn_only=args.lora_attn_only,
     )
+    # Enable gradient checkpointing BEFORE PEFT wrapping.
+    # Must be called on the base diffusers model (ModelMixin.enable_gradient_checkpointing).
+    # enable_input_require_grads / gradient_checkpointing_enable are transformers methods
+    # and do NOT exist on Flux2Transformer2DModel — only enable_gradient_checkpointing()
+    # (diffusers ModelMixin) is available, and it must be called before get_peft_model().
+    if args.gradient_checkpointing:
+        transformer.enable_gradient_checkpointing()
+        logger.info("Gradient checkpointing enabled (diffusers ModelMixin)")
+
     transformer = get_peft_model(transformer, lora_config)
     transformer.print_trainable_parameters()
 
@@ -958,9 +989,6 @@ def train(args):
             from safetensors.torch import load_file
             state_dict = load_file(ckpt_path)
             set_peft_model_state_dict(transformer, state_dict)
-
-    if args.gradient_checkpointing:
-        transformer.enable_gradient_checkpointing()
 
     # ── Cached Dataset & DataLoader ──────────────────────────────────
     train_dataset = CachedMIMICDataset(
@@ -1065,6 +1093,7 @@ def train(args):
     for epoch in range(first_epoch, num_train_epochs):
         transformer.train()
         train_loss = 0.0
+        log_loss_accum = 0.0   # accumulates loss for --logging_steps window
 
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(transformer):
@@ -1170,12 +1199,19 @@ def train(args):
                 progress_bar.update(1)
                 global_step += 1
 
-                if accelerator.is_main_process:
+                log_loss_accum += train_loss
+                train_loss = 0.0
+
+                if global_step % args.logging_steps == 0 and accelerator.is_main_process:
+                    avg_log_loss = log_loss_accum / args.logging_steps
                     accelerator.log(
-                        {"train_loss": train_loss, "lr": lr_scheduler.get_last_lr()[0]},
+                        {"train_loss": avg_log_loss, "lr": lr_scheduler.get_last_lr()[0]},
                         step=global_step,
                     )
-                train_loss = 0.0
+                    logger.info(
+                        f"step={global_step:>6d}  loss={avg_log_loss:.4f}  lr={lr_scheduler.get_last_lr()[0]:.2e}"
+                    )
+                    log_loss_accum = 0.0
 
                 if global_step % args.checkpointing_steps == 0 and accelerator.is_main_process:
                     save_checkpoint(
@@ -1424,6 +1460,8 @@ def parse_args():
                         help="Save a LoRA checkpoint every N optimizer steps. "
                              "At 12K samples, batch=1, accum=32: ~375 steps/epoch. "
                              "1000 steps ≈ every 2.7 epochs.")
+    parser.add_argument("--logging_steps",           type=int, default=200,
+                        help="Log loss to console and tensorboard every N optimizer steps.")
     parser.add_argument("--checkpoints_total_limit", type=int, default=15,
                         help="Keep this many recent checkpoints. "
                              "15 × 1000-step checkpoints covers the full 15K-step run.")

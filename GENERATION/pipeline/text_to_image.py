@@ -4,6 +4,7 @@ Pipeline: report text -> retrieve similar reports -> get reference image -> img2
 """
 
 import os
+import sys
 import logging
 import time
 from typing import List, Dict, Optional, Any, Union, Tuple
@@ -310,9 +311,220 @@ class TextToImagePipeline:
             reference_image_used=reference_used,
             gt_image_path=gt_image_path,
             generation_time=generation_time,
-            model_name="RoentGen-v2",
+            model_name=getattr(self.generator, "model_name", type(self.generator).__name__),
             seed=seed or self.generator.seed,
             strength=actual_strength
+        )
+
+
+class ChexGenImageGenerator:
+    """Medical image generator using the local ChexGen text-to-CXR model."""
+
+    DEFAULT_CHEXGEN_DIR = "/n/groups/training/bmif203/AIM2/ChexGen"
+    DEFAULT_CONFIG_PATH = os.path.join(DEFAULT_CHEXGEN_DIR, "configs", "model.py")
+    DEFAULT_CHECKPOINT_PATH = os.path.join(
+        DEFAULT_CHEXGEN_DIR, "weights", "finetune_impression_512.pth"
+    )
+
+    def __init__(
+        self,
+        config,
+        chexgen_config_path: Optional[str] = None,
+        checkpoint_path: Optional[str] = None,
+        vae_model: str = "stabilityai/sd-vae-ft-ema",
+        device: str = "cuda",
+        num_inference_steps: int = 100,
+        guidance_scale: float = 4.0,
+        image_size: int = 512,
+        t5_cache_dir: Optional[str] = None,
+    ):
+        self.config = config
+        self.chexgen_config_path = chexgen_config_path or self.DEFAULT_CONFIG_PATH
+        self.checkpoint_path = checkpoint_path or self.DEFAULT_CHECKPOINT_PATH
+        self.vae_model = vae_model
+        self.device = device
+        self.num_inference_steps = num_inference_steps
+        self.guidance_scale = guidance_scale
+        self.image_size = image_size
+        self.t5_cache_dir = t5_cache_dir
+        self.default_strength = 0.0  # text-only; kept for interface compatibility
+        self.seed = getattr(getattr(config, "system", None), "SEED", 42)
+        self.model_name = "ChexGen"
+
+        self.model = None
+        self.diffusion = None
+        self.vae = None
+        self.text_model = None
+        self.token_nums = 120
+        self.latent_size = image_size // 8
+        logger.info(
+            "ChexGenImageGenerator initialized | ckpt: %s | config: %s",
+            self.checkpoint_path, self.chexgen_config_path,
+        )
+
+    def _ensure_chexgen_imports(self):
+        chexgen_dir = os.path.dirname(os.path.dirname(self.chexgen_config_path))
+        if not os.path.isdir(chexgen_dir):
+            raise FileNotFoundError(
+                f"ChexGen directory not found: {chexgen_dir}. "
+                "Expected the local AIM2/ChexGen checkout to exist."
+            )
+        if chexgen_dir not in sys.path:
+            sys.path.insert(0, chexgen_dir)
+
+        try:
+            from mmengine import Config
+            from diffusers.models import AutoencoderKL
+            from radiffuser.diffusion import create_diffusion
+            from radiffuser.models.builder import build_model
+            from radiffuser.models.t5 import T5Embedder
+            from radiffuser.utils import find_model
+        except ImportError as exc:
+            raise ImportError(
+                "ChexGen dependencies are unavailable in the active environment. "
+                "Use /n/groups/training/bmif203/AIM2/VENV with mmengine, xformers, "
+                "einops, and ftfy installed."
+            ) from exc
+
+        return Config, AutoencoderKL, create_diffusion, build_model, T5Embedder, find_model
+
+    def load_model(self):
+        if self.model is not None:
+            return
+
+        if not os.path.exists(self.chexgen_config_path):
+            raise FileNotFoundError(f"ChexGen config not found: {self.chexgen_config_path}")
+        if not os.path.exists(self.checkpoint_path):
+            raise FileNotFoundError(f"ChexGen checkpoint not found: {self.checkpoint_path}")
+
+        (
+            Config,
+            AutoencoderKL,
+            create_diffusion,
+            build_model,
+            T5Embedder,
+            find_model,
+        ) = self._ensure_chexgen_imports()
+
+        cfg = Config.fromfile(self.chexgen_config_path)
+        model_cfg = cfg.get("model")
+        if model_cfg is None:
+            raise ValueError(f"ChexGen config missing `model`: {self.chexgen_config_path}")
+
+        self.latent_size = model_cfg.get("input_size", self.latent_size)
+        self.token_nums = model_cfg.get("token_num", self.token_nums)
+
+        self.model = build_model(model_cfg).to(self.device)
+        state_dict = find_model(self.checkpoint_path, revised_keys={"module.": ""})
+        self.model.load_state_dict(state_dict, strict=True)
+        self.model.float()
+        self.model.eval()
+
+        self.diffusion = create_diffusion(str(self.num_inference_steps))
+
+        try:
+            self.vae = AutoencoderKL.from_pretrained(
+                self.vae_model,
+                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                local_files_only=True,
+            ).to(self.device)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to load ChexGen VAE `{self.vae_model}` from local cache. "
+                "Pre-cache the VAE on a login node or pass a local VAE path with "
+                "`--chexgen_vae`."
+            ) from exc
+
+        t5_parent = self.t5_cache_dir or os.path.join(
+            os.environ.get("HF_HOME", os.path.expanduser("~/.cache")), "IF_"
+        )
+        expected_t5_path = os.path.join(t5_parent, "t5-v1_1-xxl")
+        if not os.path.isdir(expected_t5_path):
+            raise RuntimeError(
+                f"ChexGen T5 cache not found at {expected_t5_path}. "
+                "Pre-cache `DeepFloyd/t5-v1_1-xxl` locally and pass its parent "
+                "directory with `--chexgen_t5_cache_dir` if needed."
+            )
+
+        try:
+            self.text_model = T5Embedder(
+                device=self.device,
+                dir_or_name="t5-v1_1-xxl",
+                local_cache=True,
+                cache_dir=t5_parent,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to initialize ChexGen T5 embedder from local cache: {expected_t5_path}"
+            ) from exc
+
+        logger.info("ChexGen loaded | latent_size=%s | token_num=%s", self.latent_size, self.token_nums)
+
+    def _build_prompt(self, findings: str, impression: str) -> str:
+        findings = (findings or "").strip()
+        if findings:
+            return findings
+        return "No acute cardiopulmonary abnormality."
+
+    def generate_text_only(
+        self,
+        findings: str,
+        impression: str,
+        seed: Optional[int] = None,
+    ) -> Image.Image:
+        if self.model is None:
+            self.load_model()
+
+        prompt = self._build_prompt(findings, impression)
+        caption_embs, emb_masks = self.text_model.get_text_embeddings(
+            [prompt], token_nums=self.token_nums
+        )
+        caption_embs = caption_embs[:, None]
+        null_y = self.model.y_embedder.y_embedding[None].repeat(1, 1, 1)[:, None]
+
+        generator = torch.Generator(device=self.device).manual_seed(seed or self.seed)
+        z = torch.randn(
+            1, 4, self.latent_size, self.latent_size, generator=generator, device=self.device
+        ).repeat(2, 1, 1, 1)
+        model_kwargs = dict(
+            y=torch.cat([caption_embs, null_y]),
+            cfg_scale=self.guidance_scale,
+            mask=emb_masks,
+        )
+
+        with torch.no_grad():
+            samples = self.diffusion.p_sample_loop(
+                self.model.forward_with_cfg,
+                z.shape,
+                z,
+                clip_denoised=False,
+                model_kwargs=model_kwargs,
+                progress=False,
+                device=self.device,
+            )
+            samples, _ = samples.chunk(2, dim=0)
+            samples = self.vae.decode(samples / 0.18215).sample
+
+        sample = samples[0].detach().cpu().clamp(-1, 1)
+        sample = ((sample + 1) / 2 * 255).round().byte()
+        sample = sample.permute(1, 2, 0).numpy()
+        return Image.fromarray(sample).convert("L")
+
+    def generate_image_guided(
+        self,
+        findings: str,
+        impression: str,
+        reference_image: Union[str, Image.Image],
+        strength: Optional[float] = None,
+        seed: Optional[int] = None,
+    ) -> Image.Image:
+        logger.warning("ChexGenImageGenerator is text-only; reference image ignored.")
+        return self.generate_text_only(findings, impression, seed=seed)
+
+    def __repr__(self):
+        return (
+            f"ChexGenImageGenerator(ckpt={self.checkpoint_path}, "
+            f"device={self.device}, steps={self.num_inference_steps})"
         )
 
 
