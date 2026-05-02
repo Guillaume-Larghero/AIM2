@@ -4,7 +4,7 @@ A comprehensive study of generative AI stability in medical imaging through the 
 
 ## Overview
 
-This project investigates the phenomenon of **model collapse and attractor dynamics** in medical generative AI. Specifically, we study how iterative loops of chest X-ray (CXR) generation and medical report generation converge to a finite set of clinical "attractors"—stable patterns in the embedding space.
+This project investigates the phenomenon of **model collapse and attractor dynamics** in medical generative AI. Specifically, we study how iterative loops of chest X-ray (CXR) generation and medical report generation converge to a finite set of clinical "attractors" - stable patterns in the embedding space.
 
 ### Key Questions
 
