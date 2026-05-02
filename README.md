@@ -1,292 +1,295 @@
-# AIM2
-AIM2 Class repo
+# AIM2: Attractor Dynamics in Medical Vision-Language Generation
 
+A comprehensive study of generative AI stability in medical imaging through the lens of dynamical systems theory, applying Lyapunov analysis to understand how iterative vision-language generation loops converge to stable states.
 
-# GenAI Stability in Diffusion Models: A Dynamical Systems Approach for Medical Imaging
+## Overview
 
----
-Results of the discussion with Claude about our project ideas:
+This project investigates the phenomenon of **model collapse and attractor dynamics** in medical generative AI. Specifically, we study how iterative loops of chest X-ray (CXR) generation and medical report generation converge to a finite set of clinical "attractors"—stable patterns in the embedding space.
 
-## 1. ORIGINAL IDEA
+### Key Questions
 
-### 1.1 Core Strengths
+1. **Do medical vision-language generation loops exhibit attractor dynamics?** How do iterative image→text→image loops behave?
+2. **Can we characterize attractors using dynamical systems metrics?** What do Lyapunov exponents, fixed points, and basins of attraction tell us?
+3. **What is the clinical significance?** Do attractors correspond to high-frequency pathological patterns or are they artifacts of the models?
+4. **Can we predict convergence?** Given an initial image, can we predict which attractor it will converge to?
+5. **How does augmentation help?** What impact does Retrieval-Augmented Generation (RAG) have on attractor dynamics?
 
-1. **Direct Alignment with Cutting-Edge Research**: A paper just published in *Patterns* (Cell Press, December 2025) titled *"Autonomous language-image generation loops converge to generic visual motifs"* demonstrates **exactly** the phenomenon you independently conceived. They found that SDXL + LLaVA image→text→image loops converge to just 12 "visual attractors" regardless of initial prompts—what they termed "visual elevator music."
+## Project Structure
 
-2. **Medical Domain Advantage**: Unlike the Patterns paper which used natural images, you have a **constrained, well-defined manifold** (chest X-rays). CXRs have consistent structure (lungs, heart, diaphragm), making the dynamical systems analysis more tractable and interpretable.
-
-3. **Existing Infrastructure**: You already have:
-   - Trained CLIP model for CXR-report joint embeddings
-   - RAG-based retrieval system
-   - Diffusion model for CXR generation
-   - The loop experiment framework
-
-4. **Novel Theoretical Framing**: Your intuition about phase planes, fixed points, isoclines, and oscillatory behavior is **exactly** the right theoretical framework, but has not been rigorously applied to medical GenAI.
-
-### 1.2 Key Refinements Needed
-
-Your idea needs to be **sharpened** from a general "stability analysis" to a **specific, testable hypothesis** with novel contributions beyond existing work:
-
-| Existing Work (Patterns 2025) | Your Opportunity |
-|-------------------------------|------------------|
-| Natural images (SDXL/LLaVA) | Medical images (constrained manifold) |
-| Qualitative attractor identification | Quantitative dynamical systems metrics |
-| Descriptive (12 clusters) | Predictive (can we characterize attractors a priori?) |
-| No clinical relevance | Clinical implications for AI-assisted diagnosis |
-
----
-
-## 2. EXTENSIVE LITERATURE BACKGROUND
-
-### 2.1 Model Collapse & Iterative Generation
-
-**Foundational Work:**
-- **Shumailov et al. (Nature, 2024)**: "AI models collapse when trained on recursively generated data" - Established that iterative training on synthetic data causes "model collapse" with loss of tail distributions.
-- **Bertrand et al. (ICLR 2024)**: "On the stability of iterative retraining of generative models on their own data" - Showed that mixing real/synthetic data can stabilize retraining.
-- **Hintze et al. (Patterns/Cell, Dec 2025)**: The most directly relevant paper—demonstrated convergence to 12 visual attractors in autonomous image-text loops.
-
-**Key Theoretical Insights:**
-- Model collapse is a **statistical phenomenon**: variance decreases across generations
-- Two phases: *early collapse* (tail loss) → *late collapse* (mode collapse)
-- Can be modeled as Gaussian random walk in variance space
-
-### 2.2 Dynamical Systems Analysis of Neural Networks
-
-**Core References:**
-- **Chemnitz et al. (arXiv 2507.05164, July 2025)**: "A Dynamical Systems Perspective on the Analysis of Neural Networks" - Comprehensive framework treating neural networks as dynamical systems with Lyapunov analysis, fixed points, and bifurcation theory.
-- **NeurIPS 2024**: "Back to the Continuous Attractor" - Analyzes attractor dynamics in neural networks for working memory.
-- **Chang et al.**: "Neural Lyapunov Control" - Methods for constructing Lyapunov functions for neural networks.
-
-**Relevant Concepts:**
-1. **Lyapunov Exponents**: Measure sensitivity to initial conditions; positive = chaotic, negative = convergent
-2. **Fixed Point Analysis**: Identifying stable/unstable equilibria in embedding space
-3. **Basin of Attraction**: Set of initial conditions converging to a fixed point
-4. **Bifurcation Analysis**: How system behavior changes with parameters
-
-### 2.3 CLIP/Multimodal Embedding Spaces
-
-**Key Papers:**
-- **Chou et al. (arXiv 2409.13079, Sep 2024)**: "Embedding Geometries of Contrastive Language-Image Pre-Training" - Analyzes CLIP embedding geometry (Euclidean vs hyperbolic).
-- **Liang et al. (NeurIPS 2022)**: "Mind the gap: understanding the modality gap in multi-modal contrastive representation learning" - Identifies systematic gaps between modalities in CLIP.
-- **RoentGen (Nature Biomed Eng, 2024)**: Vision-language foundation model for CXR generation using MIMIC-CXR.
-
-**Important Geometric Properties:**
-- CLIP embeddings lie on a **hypersphere** (L2-normalized)
-- Modality gap: text and image embeddings occupy different regions
-- Cosine similarity defines "distance" in this space
-
-### 2.4 Medical Imaging GenAI
-
-**Foundational Work:**
-- **MIMIC-CXR**: 377,110 images with free-text reports
-- **Google CXR Foundation**: Embeddings for chest X-rays
-- **Ark+ (Nature, June 2025)**: Foundation model for chest radiography
-- **Multiple diffusion models** for CXR synthesis have been developed
-
-### 2.5 Gap in the Literature
-
-**What's Missing:**
-1. No rigorous dynamical systems analysis of multimodal generative loops
-2. No characterization of attractors in **medical** imaging domains
-3. No predictive framework for attractor locations based on embedding geometry
-4. No clinical validation of what "stability" means for diagnostic AI
-
----
-
-## 3. PROPOSED PROJECT: DYNAMICAL ATTRACTOR ANALYSIS OF MEDICAL MULTIMODAL GENERATION
-
-### 3.1 Project Title
-
-**"Attractor Dynamics in Medical Vision-Language Generation: A Lyapunov Analysis of CXR-Report Loops"**
-
-Alternative titles:
-- "Fixed Points of Thought: Dynamical Systems Analysis of Medical AI Generation Loops"
-- "Where Do Medical Diffusion Models Converge? Characterizing Attractors in CXR-Report Space"
-
-### 3.2 Core Hypothesis
-
-> **Hypothesis**: Iterative CXR-report generation loops converge to a finite set of clinical attractors whose locations in embedding space are predictable from the joint distribution geometry, and whose clinical semantics correspond to high-frequency pathological patterns (e.g., "normal chest", "cardiomegaly + effusion").
-
-### 3.3 Research Questions
-
-1. **RQ1**: Do medical vision-language generation loops exhibit attractor dynamics similar to natural images?
-2. **RQ2**: Can we characterize these attractors using classical dynamical systems metrics (Lyapunov exponents, basin geometry)?
-3. **RQ3**: What is the clinical interpretation of the attractors? (Normal vs. pathological)
-4. **RQ4**: Can we predict convergence speed and attractor membership from initial embedding location?
-5. **RQ5**: How do RAG retrieval augmentation affect attractor dynamics?
-
-### 3.4 Methodology
-
-#### Phase 1: Experimental Setup (Weeks 1-3)
-
-**Infrastructure:**
-- Use your existing CLIP model trained on MIMIC-CXR
-- Diffusion model for CXR generation (fine-tuned Stable Diffusion or train from scratch)
-- LLM for report generation (could use LLaVA, or medical-specific like Med-Flamingo)
-
-**Loop Configurations:**
 ```
-Configuration A: Image → Report → Image → Report → ... (basic loop)
-Configuration B: Image → [RAG] → Report → [RAG] → Image → ... (RAG-augmented)
-Configuration C: Image → Report → Image (single modality fixed) → ...
+AIM2/
+├── CLIP/                    # Vision-language embedding model training
+│   ├── config/              # Model configuration files
+│   ├── data/                # Data loaders and preprocessing
+│   ├── model/               # CLIP-based architecture
+│   ├── loss/                # Contrastive loss functions
+│   ├── training/            # Training scripts
+│   └── scripts/             # Utility scripts
+├── GENERATION/              # Image and text generation pipelines
+│   ├── pipeline/            # Generation loops and orchestration
+│   ├── llm/                 # LLM-based report generation
+│   ├── chexpert/            # CheXpert label extraction and validation
+│   └── scripts/             # Generation experiment scripts
+├── DIFFUSION/               # Diffusion model components
+│   ├── train_lora.py        # LoRA-based fine-tuning
+│   ├── config.yaml          # Diffusion model configuration
+│   └── TECHNIQUES.md        # Technical notes on prompt engineering
+├── ChexGen/                 # Generative foundation model for CXR
+│   ├── configs/             # Model and training configurations
+│   ├── radiffuser/          # Core diffusion transformer implementation
+│   ├── scripts/             # Sampling and generation scripts
+│   └── tools/               # Entry points (sample.py, train.py)
+├── RAG/                     # Retrieval-Augmented Generation
+│   └── requirements.txt     # Dependencies for RAG pipeline
+├── MAIRA/                   # Medical AI Report Assistant
+│   └── maira.py             # Core MAIRA implementation
+├── dataset/                 # Data processing and preparation
+│   ├── dataset.py           # Dataset loading and management
+│   └── preprocess.py        # Preprocessing pipelines
+├── Experiments/             # Experimental configurations and logs
+├── Results/                 # Analysis outputs and figures
+├── models/                  # Pre-trained model weights
+└── logs/                    # Training and experiment logs
 ```
 
-**Data:**
-- Initialize from diverse CXR images (N=1000 trajectories)
-- Stratify by: normal, common pathologies (cardiomegaly, effusion, pneumonia), rare pathologies
-- Run for T=100+ iterations per trajectory
+## Quick Start
 
-#### Phase 2: Dynamical Systems Analysis (Weeks 4-8)
+### Prerequisites
 
-**Metrics to Compute:**
+- Python 3.8+
+- CUDA 11.8+ (for GPU acceleration)
+- 500GB+ disk space (for datasets and model weights)
 
-1. **Trajectory Analysis in Embedding Space:**
-   - Track embeddings e(t) = {e_img(t), e_text(t)} through iterations
-   - Compute inter-step distance: d(t) = ||e(t+1) - e(t)||
-   - Measure convergence rate: λ = lim_{t→∞} (1/t) log(d(t)/d(0))
+### Installation
 
-2. **Lyapunov Exponent Estimation:**
-   ```python
-   def estimate_lyapunov(trajectory, perturbation_size=1e-4):
-       # Perturb initial condition
-       # Track divergence/convergence of trajectories
-       # Compute maximum Lyapunov exponent
+1. **Clone the repository:**
+   ```bash
+   cd /n/groups/training/bmif203/AIM2
    ```
 
-3. **Fixed Point Identification:**
-   - Cluster final states (t=100) using k-means with elbow method
-   - Identify fixed points as cluster centroids
-   - Verify stability: perturb and check convergence back
+2. **Create a virtual environment:**
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
 
-4. **Basin of Attraction Mapping:**
-   - For each identified attractor, map which initial conditions lead there
-   - Visualize using UMAP/t-SNE with basin coloring
+3. **Install dependencies:**
+   ```bash
+   # Core dependencies
+   pip install torch>=2.0 torchvision transformers diffusers
+   
+   # Install component-specific requirements
+   pip install -r CLIP/requirements.txt
+   pip install -r GENERATION/requirements.txt
+   pip install -r RAG/requirements.txt
+   
+   # For ChexGen
+   cd ChexGen && pip install -r requirements.txt && cd ..
+   ```
 
-5. **Phase Portrait Construction:**
-   - Project onto principal components of embedding space
-   - Draw vector field showing flow direction
-   - Identify nullclines and bifurcation points
+## Components
 
-#### Phase 3: Clinical Interpretation (Weeks 9-12)
+### 1. CLIP Module
+**Vision-Language Embedding Learning**
 
-**Clinical Attractor Characterization:**
-- Extract reports/images at attractors
-- Have radiologist annotate clinical content
-- Correlate with ICD codes from MIMIC-IV
+Trains a contrastive model on MIMIC-CXR data to learn joint embeddings of chest X-rays and their corresponding medical reports.
 
-**Pathology-Specific Analysis:**
-- Do different pathologies converge to different attractors?
-- Is there "diagnostic collapse" (all → "normal")?
-- How do rare diseases behave vs. common ones?
+**Key files:**
+- `CLIP/training/` - Main training loop
+- `CLIP/model/` - Architecture definitions
+- `CLIP/data/` - Dataset loaders
 
-#### Phase 4: Predictive Modeling (Weeks 13-16)
+**Example usage:**
+```bash
+python CLIP/training/train.py --config CLIP/config/default.yaml
+```
 
-**Attractor Prediction:**
-- Train classifier: initial embedding → final attractor
-- Features: embedding coordinates, distance to known attractors, local curvature
+### 2. GENERATION Module
+**Iterative Generation Pipelines**
 
-**Convergence Time Prediction:**
-- Regression model for time-to-convergence
-- Identify factors that accelerate/delay convergence
+Orchestrates iterative loops of image generation and text generation, tracking embeddings and trajectories through the embedding space.
 
-### 3.5 Novel Contributions
+**Supported configurations:**
+- **Config A:** Image → Report → Image → ... (basic loop)
+- **Config B:** Image → [RAG] → Report → [RAG] → Image → ... (RAG-augmented)
+- **Config C:** Image → Report → Image (single modality fixed)
 
-| Contribution | Novelty | Significance |
-|--------------|---------|--------------|
-| First dynamical systems analysis of medical GenAI loops | High | New theoretical framework |
-| Lyapunov characterization of multimodal attractors | High | Rigorous stability metrics |
-| Clinical interpretation of attractors | Medium-High | Bridges theory and practice |
-| Basin of attraction mapping in CLIP space | High | Geometric understanding |
-| RAG impact on attractor dynamics | Medium | Practical implications |
-| Predictive model for convergence | Medium | Enables intervention design |
+**Key files:**
+- `GENERATION/pipeline/` - Generation loop orchestration
+- `GENERATION/llm/` - Report generation (using LLaVA, Med-Flamingo, etc.)
+- `GENERATION/scripts/` - Experiment runners
 
-### 3.6 Expected Outcomes
+**Example usage:**
+```bash
+python GENERATION/scripts/run_experiment.py --config GENERATION/config/basic_loop.yaml
+```
 
-1. **Empirical Finding**: Medical vision-language loops converge to K clinical attractors (K ≈ 10-20)
-2. **Theoretical Contribution**: Lyapunov-based characterization of attractor stability
-3. **Clinical Insight**: Attractors correspond to high-frequency diagnostic patterns
-4. **Practical Tool**: Predictor for when a generative system is "trapped" in an attractor
+### 3. DIFFUSION Module
+**Diffusion-based CXR Synthesis**
 
-### 3.7 Experimental Design Table
+Fine-tunes diffusion models (Stable Diffusion, DiT) for medical image generation with LoRA adapters and classifier-free guidance.
 
-| Experiment | Independent Variable | Dependent Variable | Sample Size |
-|------------|---------------------|-------------------|-------------|
-| E1: Basic Loop | Initial image class | Final attractor, convergence time | 1000 trajectories |
-| E2: Temperature | Sampling temperature (0.1-1.5) | Attractor diversity | 500 × 7 temps |
-| E3: RAG Impact | With/without RAG | Convergence dynamics | 500 × 2 |
-| E4: Pathology | Pathology type (6 classes) | Attractor membership | 600 |
-| E5: Model Swap | Different diffusion models | Attractor stability | 300 × 3 models |
+**Key files:**
+- `DIFFUSION/train_lora.py` - LoRA fine-tuning script
+- `DIFFUSION/config.yaml` - Model and training hyperparameters
 
----
+### 4. ChexGen Module
+**Foundation Model for Chest Radiography**
 
-## 4. FEASIBILITY ANALYSIS
+A pre-trained latent diffusion transformer (DiT) specifically designed for realistic chest X-ray synthesis with text conditioning.
 
-### 4.1 Timeline (4 months)
+**Features:**
+- Text-conditioned generation
+- Mask-based inpainting (in development)
+- Bounding-box-based editing (in development)
 
-| Month | Activities | Deliverables |
-|-------|------------|--------------|
-| **Month 1** | Infrastructure setup, baseline experiments | Working loop system, initial trajectories |
-| **Month 2** | Full trajectory generation, metric computation | 1000+ trajectories, Lyapunov estimates |
-| **Month 3** | Attractor analysis, clinical annotation | Attractor catalog, basin maps |
-| **Month 4** | Predictive modeling, paper writing | Complete analysis, draft paper |
+**Usage:**
+```bash
+cd ChexGen
+bash scripts/sample.sh
+```
 
-### 4.2 Computational Requirements
+See [ChexGen/README.md](ChexGen/README.md) for detailed documentation.
 
-- **GPU**: A100 or similar for diffusion model inference
-- **Storage**: ~500GB for trajectories and embeddings
-- **Compute Time**: ~200 GPU-hours for full experiment suite
+### 5. RAG Module
+**Retrieval-Augmented Generation**
 
-### 4.3 Risk Mitigation
+Implements RAG systems that retrieve relevant medical examples from a knowledge base to improve report generation quality and consistency.
 
-| Risk | Likelihood | Mitigation |
-|------|------------|------------|
-| No clear attractors emerge | Low | Prior work shows this is unlikely; adjust iterations |
-| Computational bottleneck | Medium | Pre-compute embeddings, use efficient sampling |
-| Clinical annotation time | Medium | Start with automated CheXbert labels |
-| Paper scope creep | Medium | Focus on 2-3 core findings |
+### 6. MAIRA Module
+**Medical AI Report Assistant**
 
----
+Specialized LLM-based module for generating clinically coherent medical reports given chest X-ray embeddings.
 
-## 5. ALTERNATIVE/COMPLEMENTARY DIRECTIONS
+## Experimental Workflow
 
-If you want to pivot or add components:
+### Phase 1: Setup
+1. Prepare MIMIC-CXR dataset (requires credentialed access)
+2. Train or load pre-trained CLIP model
+3. Set up diffusion models for image generation
+4. Configure LLM for report generation
 
-### 5.1 Theoretical Focus
-- **Pure dynamical systems**: Prove theorems about convergence rates under specific CLIP geometry assumptions
-- **Information-theoretic**: Analyze entropy reduction across iterations
+### Phase 2: Trajectory Generation
+1. Select diverse initial CXR images (stratified by pathology)
+2. Run generation loops (100+ iterations per trajectory)
+3. Log embeddings at each iteration
+4. Track convergence metrics
 
-### 5.2 Clinical Focus
-- **Diagnostic Safety**: Do attractors represent "safe" diagnoses? Is there bias toward missing rare diseases?
-- **Intervention Design**: How to "escape" a bad attractor during AI-assisted diagnosis
+### Phase 3: Dynamical Systems Analysis
+1. **Lyapunov Exponent Estimation:** Measure sensitivity to initial conditions
+2. **Fixed Point Identification:** Cluster final states to find attractors
+3. **Basin of Attraction Mapping:** Determine which initial conditions lead to each attractor
+4. **Phase Portrait Construction:** Visualize the embedding space dynamics
 
-### 5.3 Methodological Focus
-- **Novel Metrics**: Propose new stability metrics tailored for medical GenAI
-- **Benchmark**: Create a benchmark for evaluating multimodal generation stability
+### Phase 4: Clinical Interpretation
+1. Extract reports/images at identified attractors
+2. Have radiologists annotate clinical content
+3. Correlate with ICD codes and pathology labels
+4. Analyze how different diseases behave
 
+## Key Metrics
 
-## 6. KEY REFERENCES
+### Convergence Metrics
+- **Inter-step distance:** `d(t) = ||e(t+1) - e(t)||`
+- **Convergence rate:** `λ = lim_{t→∞} (1/t) log(d(t)/d(0))`
+- **Time to convergence:** Iterations until stabilization
 
-### Must-Cite Papers:
+### Dynamical Systems Metrics
+- **Lyapunov exponents:** Maximum Lyapunov exponent (λ_max)
+- **Fixed point stability:** Distance to nearest attractor
+- **Basin entropy:** Complexity of basin of attraction boundaries
 
-1. Hintze et al. (2025). "Autonomous language-image generation loops converge to generic visual motifs." *Patterns* (Cell Press).
+### Clinical Metrics
+- **Attractor purity:** Fraction of samples at each attractor belonging to same pathology class
+- **Diagnostic coverage:** What percentage of conditions converge to attractors
+- **RAG impact:** How does augmentation change attractor structure
 
-2. Shumailov et al. (2024). "AI models collapse when trained on recursively generated data." *Nature*.
+## Dataset Requirements
 
-3. Chemnitz et al. (2025). "A Dynamical Systems Perspective on the Analysis of Neural Networks." *arXiv*.
+- **MIMIC-CXR:** 377,110 images with free-text reports (requires PhysioNet credentialed access)
+- **MIMIC-IV:** Associated clinical notes and ICD codes
+- **CheXpert:** Optional for label extraction (some images overlap with MIMIC-CXR)
 
-4. Bluethgen et al. (2024). "A vision-language foundation model for the generation of realistic chest X-ray images." *Nature Biomed. Eng.*
+### Getting Access
 
-5. Radford et al. (2021). "Learning Transferable Visual Models From Natural Language Supervision." *ICML* (CLIP).
+1. Complete [CITI training](https://about.citiprogram.org/)
+2. Request credentialed access via [PhysioNet](https://physionet.org/settings/credentialing/)
+3. Download datasets and place in `dataset/` directory
 
-6. Ho et al. (2020). "Denoising Diffusion Probabilistic Models." *NeurIPS*.
+## Computational Requirements
 
-### Additional Key References:
+| Resource | Requirement |
+|----------|------------|
+| **GPU** | A100 40GB or RTX 6000 Ada (preferred) |
+| **RAM** | 128GB+ |
+| **Storage** | 500GB+ (for data, embeddings, checkpoints) |
+| **Compute Time** | ~200 GPU-hours for full experiment suite |
 
-7. Liang et al. (2022). "Mind the gap: understanding the modality gap in multi-modal contrastive representation learning." *NeurIPS*.
+## Configuration
 
-8. Chang et al. (2019). "Neural Lyapunov Control." *NeurIPS*.
+Configuration files are YAML-based and located in subdirectory `config/` folders:
 
-9. Johnson et al. (2019). "MIMIC-CXR: A de-identified publicly available database of chest radiographs with free-text reports." *Scientific Data*.
+- `CLIP/config/` - Model architecture and training hyperparameters
+- `GENERATION/config/` - Pipeline specifications and loop configurations
+- `DIFFUSION/config.yaml` - Diffusion model settings
+- `ChexGen/configs/` - ChexGen model configurations
 
-10. Chou et al. (2024). "Embedding Geometries of Contrastive Language-Image Pre-Training." *arXiv*.
+## Output Structure
 
+- **Experiments/:** Configuration files for each experimental run
+- **Results/:** Analysis outputs, visualizations, attractor catalogs
+- **logs/:** Training logs, tensorboard events, metrics
+- **models/:** Checkpoints and pre-trained weights
+
+## Key References
+
+### Foundational Papers
+
+1. **Hintze et al. (2025).** "Autonomous language-image generation loops converge to generic visual motifs." *Patterns* (Cell Press).
+
+2. **Shumailov et al. (2024).** "AI models collapse when trained on recursively generated data." *Nature*.
+
+3. **Chemnitz et al. (2025).** "A Dynamical Systems Perspective on the Analysis of Neural Networks." *arXiv*.
+
+### Medical Imaging & Foundation Models
+
+4. **Bluethgen et al. (2024).** "A vision-language foundation model for the generation of realistic chest X-ray images." *Nature Biomedical Engineering*.
+
+5. **Johnson et al. (2019).** "MIMIC-CXR: A de-identified publicly available database of chest radiographs with free-text reports." *Scientific Data*.
+
+6. **Ark+ (2025).** Foundation model for chest radiography. *Nature*.
+
+### Technical Methods
+
+7. **Radford et al. (2021).** "Learning Transferable Visual Models From Natural Language Supervision." *ICML* (CLIP).
+
+8. **Ho et al. (2020).** "Denoising Diffusion Probabilistic Models." *NeurIPS*.
+
+9. **Liang et al. (2022).** "Mind the gap: understanding the modality gap in multi-modal contrastive representation learning." *NeurIPS*.
+
+10. **Chou et al. (2024).** "Embedding Geometries of Contrastive Language-Image Pre-Training." *arXiv*.
+
+## Contributing
+
+This is a class project for BMIF203 Training. For questions or contributions:
+- Check existing Experiments/ and Results/ for prior work
+- Document new experiments in Experiments/ with configuration and notes
+- Update Results/ with analysis outputs and figures
+
+## License
+
+This project incorporates code from multiple sources:
+- **ChexGen:** [Apache 2.0 License](ChexGen/LICENSE)
+- **CLIP training:** Adapted from OpenAI's CLIP
+- **Diffusion components:** Adapted from Hugging Face Diffusers
+
+See individual component directories for specific license information.
+
+## Acknowledgments
+
+This project builds on:
+- [DiT (Diffusion Transformers)](https://github.com/facebookresearch/DiT)
+- [PixArt-alpha](https://github.com/PixArt-alpha/PixArt-alpha)
+- [OpenAI CLIP](https://github.com/openai/CLIP)
+- [Hugging Face Diffusers](https://github.com/huggingface/diffusers)
+- [MIMIC-CXR Dataset](https://physionet.org/content/mimic-cxr-jpg/)
