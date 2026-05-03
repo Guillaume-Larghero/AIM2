@@ -134,10 +134,21 @@ def load_main_run(main_dir):
     return trajs
 
 
-def load_lyapunov_run(lyap_dir):
-    """Returns dict {anchor_sid: list of trajectory dicts (one per seed replicate)}."""
+def load_lyapunov_run(lyap_dir, K_required=100):
+    """Returns dict {anchor_sid: list of trajectory dicts (one per seed replicate)}.
+
+    Selection policy (balanced design):
+      • A seed is "complete" iff it has K_required+1 image embeds, K_required+1
+        text embeds (indices 000..K_required), and both anchor_*.npy files.
+      • Per anchor, list its complete seeds (sorted).
+      • Let J = min, across ALL anchors with ≥1 complete seed, of that count.
+        I.e. the largest seed-count common to every (non-empty) anchor.
+      • For each anchor, keep the first J complete seeds.
+      • Anchors with 0 complete seeds are dropped (logged).
+      • If J < 2, Block B1b is skipped (need ≥2 replicates for pairwise divergence).
+    """
     if not os.path.isdir(lyap_dir):
-        logger.warning(f"Lyapunov dir not found: {lyap_dir} — Block B1 will be skipped")
+        logger.warning(f"Lyapunov dir not found: {lyap_dir} — Block B1b will be skipped")
         return {}
 
     summary_path = os.path.join(lyap_dir, "summary.json")
@@ -145,35 +156,99 @@ def load_lyapunov_run(lyap_dir):
         logger.warning(f"Lyapunov summary not found at {summary_path}")
         return {}
 
-    out = defaultdict(list)
+    expected = K_required + 1   # iter 0..K_required inclusive
+
+    # ── Pass 1: per anchor, find FULLY COMPLETE seed dirs ────────────────────
+    complete_by_anchor = {}      # sid -> [seed_dir, ...] sorted
+    incomplete_total = 0
     anchors = sorted(glob(os.path.join(lyap_dir, "anchor_*")))
     for anchor_path in anchors:
         sid = os.path.basename(anchor_path).replace("anchor_", "")
-        seed_dirs = sorted(glob(os.path.join(anchor_path, "seed_*")))
-        for sd in seed_dirs:
-            try:
-                anchor_img = np.load(os.path.join(sd, "anchor_img_embed.npy"))
-                anchor_txt = np.load(os.path.join(sd, "anchor_text_embed.npy"))
-                img_files = sorted(glob(os.path.join(sd, "img_embed_iter_*.npy")))
-                K = len(img_files)
-                img_traj = np.stack([np.load(f) for f in img_files])
-                txt_traj = np.stack([
-                    np.load(os.path.join(sd, f"text_embed_iter_{k:03d}.npy"))
-                    for k in range(K)
-                ])
-                out[sid].append({
-                    "seed_dir":   sd,
-                    "anchor_img": anchor_img,
-                    "anchor_txt": anchor_txt,
-                    "img_traj":   img_traj,
-                    "txt_traj":   txt_traj,
-                })
-            except FileNotFoundError as e:
-                logger.warning(f"  partial trajectory skipped: {sd}  ({e})")
+        complete = []
+        for sd in sorted(glob(os.path.join(anchor_path, "seed_*"))):
+            n_img = len(glob(os.path.join(sd, "img_embed_iter_*.npy")))
+            n_txt = len(glob(os.path.join(sd, "text_embed_iter_*.npy")))
+            has_last = (
+                os.path.exists(os.path.join(sd, f"img_embed_iter_{K_required:03d}.npy"))
+                and os.path.exists(os.path.join(sd, f"text_embed_iter_{K_required:03d}.npy"))
+            )
+            has_anchors = (
+                os.path.exists(os.path.join(sd, "anchor_img_embed.npy"))
+                and os.path.exists(os.path.join(sd, "anchor_text_embed.npy"))
+            )
+            if n_img == expected and n_txt == expected and has_last and has_anchors:
+                complete.append(sd)
+            else:
+                incomplete_total += 1
+        complete_by_anchor[sid] = complete
+
+    if not complete_by_anchor:
+        logger.warning("Lyapunov: no anchor_* directories found")
+        return {}
+
+    # ── Determine J = common-highest # of complete seeds across non-empty anchors
+    nonempty_counts = [len(v) for v in complete_by_anchor.values() if len(v) > 0]
+    empty_anchors   = [s for s, v in complete_by_anchor.items() if len(v) == 0]
+    if not nonempty_counts:
+        logger.warning("Lyapunov: no anchor has any complete seed; Block B1b skipped")
+        return {}
+
+    J = min(nonempty_counts)
+    logger.info(
+        f"Lyapunov scan: {len(complete_by_anchor)} anchors, "
+        f"{incomplete_total} incomplete seeds skipped"
+    )
+    logger.info(
+        f"  complete-seed counts (non-empty anchors): "
+        f"min={min(nonempty_counts)}, median={int(np.median(nonempty_counts))}, "
+        f"max={max(nonempty_counts)}"
+    )
+    logger.info(
+        f"  → using J = {J} complete seeds per anchor "
+        f"(K={K_required}, {expected} embeds each)"
+    )
+    if empty_anchors:
+        head = ", ".join(empty_anchors[:5])
+        tail = " …" if len(empty_anchors) > 5 else ""
+        logger.warning(
+            f"  {len(empty_anchors)} anchor(s) with NO complete seeds dropped: {head}{tail}"
+        )
+
+    if J < 2:
+        logger.warning(
+            f"  Common-highest J = {J} < 2; pairwise replicate divergence cannot be "
+            f"computed. Block B1b will be skipped."
+        )
+        return {}
+
+    # ── Pass 2: load the first J complete seeds per anchor ───────────────────
+    out = defaultdict(list)
+    for sid, complete in complete_by_anchor.items():
+        if not complete:
+            continue
+        for sd in complete[:J]:
+            anchor_img = np.load(os.path.join(sd, "anchor_img_embed.npy"))
+            anchor_txt = np.load(os.path.join(sd, "anchor_text_embed.npy"))
+            img_traj = np.stack([
+                np.load(os.path.join(sd, f"img_embed_iter_{k:03d}.npy"))
+                for k in range(expected)
+            ])
+            txt_traj = np.stack([
+                np.load(os.path.join(sd, f"text_embed_iter_{k:03d}.npy"))
+                for k in range(expected)
+            ])
+            out[sid].append({
+                "seed_dir":   sd,
+                "anchor_img": anchor_img,
+                "anchor_txt": anchor_txt,
+                "img_traj":   img_traj,
+                "txt_traj":   txt_traj,
+            })
 
     n_total = sum(len(v) for v in out.values())
-    logger.info(f"Loaded Lyapunov: {len(out)} anchors × ~{n_total/max(len(out),1):.0f} seeds "
-                f"= {n_total} trajectories")
+    logger.info(
+        f"Loaded Lyapunov: {len(out)} anchors × {J} seeds = {n_total} trajectories"
+    )
     return dict(out)
 
 
@@ -479,7 +554,7 @@ def block_B_lyapunov(trajs, lyap_data, basinB, out_dir):
     ax.set_xlabel("Iteration $k$")
     ax.set_ylabel(r"$\lambda_k$")
     ax.set_title("Finite-time Lyapunov exponent")
-    ax.legend(loc="best", fontsize=7)
+    # ax.legend(loc="best", fontsize=7)
 
     ax = axes[1]
     ax.plot(ks, V_traj.mean(0), color="C4", marker="o", ms=4)
@@ -1517,6 +1592,7 @@ def main():
     if "B" in results:
         summary["B"] = {
             "lambda_sys_final":  float(results["B"]["lambda_sys"][-1]),
+            "lambda_sys_per_k":  list(map(float, results["B"]["lambda_sys"])),
             "monotone_V_frac":   float(results["B"]["monotone_frac"]),
             "basin_radius_p95":  float(results["B"]["basin_radius_p95"]),
             "lyapunov_per_anchor": {
