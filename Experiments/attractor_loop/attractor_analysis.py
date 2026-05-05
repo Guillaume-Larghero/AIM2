@@ -483,8 +483,14 @@ def block_B_lyapunov(trajs, lyap_data, basinB, out_dir):
 
     # ── B1b: per-anchor Lyapunov from seed replicates ─────────────────────────
     lyap_per_anchor = {}
+    lyap_per_anchor_early = {}  # early-window estimate over k in [1, K_early]
+    K_early = 10  # window over which the small-separation approximation is valid
     if lyap_data:
         logger.info("  B1b: per-anchor Lyapunov from seed replicates")
+        logger.info(f"        (also reporting EARLY-WINDOW estimate over k in [1, {K_early}],")
+        logger.info(f"         which approximates a classical Lyapunov exponent in the")
+        logger.info(f"         small-separation limit; long-horizon values are bounded by")
+        logger.info(f"         the basin diameter and are finite-separation divergence rates)")
         for sid, replicates in lyap_data.items():
             if len(replicates) < 2:
                 continue
@@ -505,7 +511,23 @@ def block_B_lyapunov(trajs, lyap_data, basinB, out_dir):
                         lambdas[k] = float(np.mean(np.log(ratios)) / k)
 
             lyap_per_anchor[sid] = lambdas
-            logger.info(f"    anchor {sid}: λ at final = {lambdas[-1]:+.4f}")
+
+            # ── EARLY-WINDOW estimate ─────────────────────────────────────
+            # The denominator for the k=1 step here is pd_0 (zero by
+            # construction in the classical sense), so we instead use the
+            # running average of finite-time exponents over k in [1, K_early],
+            # which is closer to the small-separation tangent-space exponent.
+            # If the trajectory length is shorter than K_early, fall back to
+            # whatever we have.
+            k_early_use = min(K_early, K_l - 1)
+            if k_early_use >= 1:
+                lambda_early = float(np.mean(lambdas[1:k_early_use + 1]))
+            else:
+                lambda_early = float("nan")
+            lyap_per_anchor_early[sid] = lambda_early
+
+            logger.info(f"    anchor {sid}: λ_long={lambdas[-1]:+.4f}  "
+                        f"λ_early={lambda_early:+.4f}")
 
     # ── B2: basin radius via cluster spread (deferred until C runs) ───────────
     # Reads from basinB if Block C already provided clustering.
@@ -530,6 +552,30 @@ def block_B_lyapunov(trajs, lyap_data, basinB, out_dir):
     monotone_frac = monotone_count / N
     logger.info(f"  B3: V(z)=||z-c||² monotone-decreasing on {monotone_count}/{N} "
                 f"({100*monotone_frac:.1f}%) trajectories")
+
+    # ── B1c: system-level EARLY-WINDOW Lyapunov ───────────────────────────────
+    # Same as B1a but averaged over k in [1, K_early] only, where the small-
+    # separation approximation to a classical Lyapunov exponent is more valid.
+    K_early_sys = min(K_early, K - 1)
+    if K_early_sys >= 1:
+        lambda_sys_early = float(np.nanmean(lambda_sys[1:K_early_sys + 1]))
+    else:
+        lambda_sys_early = float("nan")
+    logger.info(f"  B1c: λ_sys (early-window k in [1, {K_early_sys}]): "
+                f"{lambda_sys_early:+.4f}")
+
+    # ── Cohort-mean early-window per-anchor exponent (the headline) ──────────
+    early_vals = [v for v in lyap_per_anchor_early.values() if np.isfinite(v)]
+    if early_vals:
+        lambda_a_early_mean = float(np.mean(early_vals))
+        lambda_a_early_n_pos = sum(1 for v in early_vals if v > 0)
+        lambda_a_early_n_total = len(early_vals)
+        logger.info(f"  B1c: cohort-mean λ̄_a (early): {lambda_a_early_mean:+.4f}  "
+                    f"({lambda_a_early_n_pos}/{lambda_a_early_n_total} anchors > 0)")
+    else:
+        lambda_a_early_mean = float("nan")
+        lambda_a_early_n_pos = 0
+        lambda_a_early_n_total = 0
 
     # ── Save ──────────────────────────────────────────────────────────────────
     np.savez(os.path.join(cache_dir, "B_lyapunov.npz"),
@@ -571,6 +617,12 @@ def block_B_lyapunov(trajs, lyap_data, basinB, out_dir):
     logger.info(f"  Figure → figures/B_lyapunov.pdf")
 
     return {"lambda_sys": lambda_sys, "lyap_per_anchor": lyap_per_anchor,
+            "lyap_per_anchor_early": lyap_per_anchor_early,
+            "lambda_sys_early": lambda_sys_early,
+            "lambda_a_early_mean": lambda_a_early_mean,
+            "lambda_a_early_n_pos": lambda_a_early_n_pos,
+            "lambda_a_early_n_total": lambda_a_early_n_total,
+            "K_early": K_early,
             "V_traj": V_traj, "monotone_frac": monotone_frac,
             "basin_radius_p95": basin_radius_p95,
             "c_global": c_global}
@@ -1149,6 +1201,37 @@ def block_E_high_dim(A_results, out_dir):
         MI_txt_per_k[k] = mi_via_shared_pca(Z_txt[:, 0], Z_txt[:, k], pca_txt_mi)
         logger.info(f"    k={k}: MI_img={MI_img_per_k[k]:+.3f}  MI_txt={MI_txt_per_k[k]:+.3f}")
 
+    # ── kNN sensitivity sweep at iter-1 (the headline step) ────────────────
+    # The 5.64 -> 0.17 nat headline collapse depends on the KSG kNN parameter.
+    # Reviewers have asked whether the collapse persists across kNN choices.
+    # We re-run iter-1 MI with kNN in {3, 5, 10, 20} to demonstrate robustness.
+    def mi_via_shared_pca_knn(X0_full, Xk_full, pca_fitted, n_neighbors):
+        if X0_full.shape[0] < n_components_mi + 5:
+            return float("nan")
+        X0_p = pca_fitted.transform(X0_full)
+        Xk_p = pca_fitted.transform(Xk_full)
+        mis = []
+        for d_idx in range(X0_p.shape[1]):
+            try:
+                mi = mutual_info_regression(
+                    X0_p[:, d_idx:d_idx+1], Xk_p[:, d_idx],
+                    n_neighbors=n_neighbors, random_state=42,
+                )[0]
+                mis.append(mi)
+            except Exception:
+                pass
+        return float(np.mean(mis)) if mis else float("nan")
+
+    logger.info("  MI kNN sensitivity sweep at k=1...")
+    MI_iter1_knn_sweep = {"image": {}, "text": {}}
+    for kn in [3, 5, 10, 20]:
+        mi_img_1 = mi_via_shared_pca_knn(Z_img[:, 0], Z_img[:, 1], pca_img_mi, kn)
+        mi_txt_1 = mi_via_shared_pca_knn(Z_txt[:, 0], Z_txt[:, 1], pca_txt_mi, kn)
+        MI_iter1_knn_sweep["image"][kn] = mi_img_1
+        MI_iter1_knn_sweep["text"][kn] = mi_txt_1
+        logger.info(f"    kNN={kn:2d}: MI_img(k=1)={mi_img_1:+.3f}  "
+                    f"MI_txt(k=1)={mi_txt_1:+.3f}")
+
     # ── Save & figure ─────────────────────────────────────────────────────────
     np.savez(os.path.join(cache_dir, "E_high_dim.npz"),
              PR_img=PR_img, PR_txt=PR_txt,
@@ -1191,7 +1274,8 @@ def block_E_high_dim(A_results, out_dir):
 
     return {"PR_img": PR_img, "PR_txt": PR_txt,
             "eig_spectrum": eig_spectrum, "rank95": rank95,
-            "MI_img_per_k": MI_img_per_k, "MI_txt_per_k": MI_txt_per_k}
+            "MI_img_per_k": MI_img_per_k, "MI_txt_per_k": MI_txt_per_k,
+            "MI_iter1_knn_sweep": MI_iter1_knn_sweep}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1520,7 +1604,7 @@ def parse_args():
     p.add_argument("--out_dir",      type=str, default=DEFAULT_OUT)
     p.add_argument("--data_csv",     type=str,
                    default=f"{BASE_DIR}/processed_data/processed_data.csv")
-    p.add_argument("--blocks",       nargs="+", default=list("ABCDEF"))
+    p.add_argument("--blocks",       nargs="+", default=list("ABCEF"))
     p.add_argument("--n_permutations", type=int, default=1000,
                    help="Permutations for Block F profile-distance test.")
     return p.parse_args()
@@ -1593,10 +1677,18 @@ def main():
         summary["B"] = {
             "lambda_sys_final":  float(results["B"]["lambda_sys"][-1]),
             "lambda_sys_per_k":  list(map(float, results["B"]["lambda_sys"])),
+            "lambda_sys_early":  float(results["B"].get("lambda_sys_early", float("nan"))),
+            "lambda_a_early_mean":   float(results["B"].get("lambda_a_early_mean", float("nan"))),
+            "lambda_a_early_n_pos":  int(results["B"].get("lambda_a_early_n_pos", 0)),
+            "lambda_a_early_n_total": int(results["B"].get("lambda_a_early_n_total", 0)),
+            "K_early":           int(results["B"].get("K_early", 10)),
             "monotone_V_frac":   float(results["B"]["monotone_frac"]),
             "basin_radius_p95":  float(results["B"]["basin_radius_p95"]),
             "lyapunov_per_anchor": {
                 k: list(map(float, v)) for k, v in results["B"]["lyap_per_anchor"].items()
+            },
+            "lyapunov_per_anchor_early": {
+                k: float(v) for k, v in results["B"].get("lyap_per_anchor_early", {}).items()
             },
         }
     if "C" in results:
@@ -1616,6 +1708,10 @@ def main():
             "rank95":     int(results["E"]["rank95"]),
             "MI_img_per_k": [float(x) for x in results["E"]["MI_img_per_k"]],
             "MI_txt_per_k": [float(x) for x in results["E"]["MI_txt_per_k"]],
+            "MI_iter1_knn_sweep": {
+                modality: {int(kn): float(v) for kn, v in d.items()}
+                for modality, d in results["E"].get("MI_iter1_knn_sweep", {}).items()
+            },
         }
     if "F" in results and results["F"] is not None:
         F = results["F"]
