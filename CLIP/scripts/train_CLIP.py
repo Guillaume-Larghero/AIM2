@@ -1,31 +1,3 @@
-#!/usr/bin/env python3
-"""
-Training script for Medical CLIP (512px, FINDINGS-only).
-
-Issues fixed from original:
-  1. --lr flag was silently ignored.
-     config.training.LEARNING_RATE is set but the optimizer uses differential
-     per-group LRs (IMAGE_ENCODER_LR, TEXT_ENCODER_LR, PROJECTION_LR) defined
-     in get_param_groups(). LEARNING_RATE is never read by the optimizer.
-     → --lr now sets all three group LRs proportionally so the flag has effect.
-
-  2. --resume_checkpoint flag added.
-     100-epoch runs on O2 may hit walltime limits. This lets you resume from
-     any saved checkpoint without restarting training.
-
-  3. test_loader was created but never used.
-     → Final test evaluation added after trainer.fit().
-
-  4. --use_findings_only flag added (mirrors config.data.USE_FINDINGS_ONLY).
-     Allows overriding the config default from the command line for ablations.
-
-Usage:
-    python train_CLIP.py
-    python train_CLIP.py --epochs 50 --batch_size 4
-    python train_CLIP.py --resume_checkpoint CLIP/outputs/checkpoints/best_model.pth
-    python train_CLIP.py --no_findings_only   # use FINDINGS+IMPRESSION (ablation)
-"""
-
 import os
 import argparse
 

@@ -1,26 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 — MI estimator calibration on synthetic Gaussian data.
-
-Validates the KSG mutual-information estimator (sklearn
-mutual_info_regression with shared-PCA-20 pre-projection, kNN=5) at the
-exact (N, d) regime used in the paper, by running it on synthetic two-channel
-Gaussian data with KNOWN mutual information.
-
-The headline of the paper is "image MI drops 5.64 -> 0.17 nats in one
-iteration"; reviewers can fairly ask whether the 0.17 floor is a real
-residual signal or the estimator's bias floor in d=256, N=1008. This
-script answers that by reporting estimator output at known I(X;Y) values
-spanning the plausible range of the estimate.
-
-OUTPUTS:
-    out_dir/mi_calibration.json   — true_MI / estimated_MI pairs
-    out_dir/mi_calibration.csv    — same data in flat form for plotting
-
-USAGE:
-    python mi_calibration.py --out_dir /path/to/analysis/MI_calibration
-"""
-
 import argparse
 import json
 import logging
@@ -86,7 +63,7 @@ def rho_for_target_per_dim_mi(I_per_dim_nats):
 # Note: this is a univariate-mean MI, not a multivariate MI. It is the same
 # proxy used in the paper, so the calibration is fair to the headline number.
 
-def estimate_mi_paper_style(X, Y, n_components=20, knn=5, seed=42):
+def estimate_mi_paper_style(X, Y, n_components=20, knn=5, seed=100):
     """Estimate MI in the same way attractor_analysis.py block E does."""
     from sklearn.decomposition import PCA
     from sklearn.feature_selection import mutual_info_regression
@@ -147,7 +124,7 @@ def main():
     target_MIs = [float(x) for x in args.target_MI_per_dim.split(",")]
     logger.info(f"  Target per-dimension MI values (nats): {target_MIs}")
 
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(100)
 
     rows = []
     for I_target in target_MIs:
@@ -157,7 +134,7 @@ def main():
         for r in range(args.n_repeats):
             X, Y = make_paired_gaussian(args.N, args.d, rho, rng)
             mi_est, mis_per_pc = estimate_mi_paper_style(
-                X, Y, n_components=args.n_pca, knn=args.knn, seed=42 + r)
+                X, Y, n_components=args.n_pca, knn=args.knn, seed=100 + r)
             estimates.append(mi_est)
             logger.info(f"    rep {r:2d}: estimated mean per-PC MI = {mi_est:+.4f}")
         est_arr = np.array(estimates)

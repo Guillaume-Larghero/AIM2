@@ -1,35 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 — Long-horizon analysis (K=100 N=48).
-
-Runs a subset of the standard analysis blocks against the chexgen_long
-trajectories, parameterized by K (iteration depth at which to "stop").
-Asks: which findings from the K=11 main run hold asymptotically, which
-saturate between K=11 and K=100, and which (if any) qualitatively
-change?
-
-Probes K ∈ {1..10, 12, 14, 16, 18, 20, 25, 30, 35, 40, 45, 50, 60, 70,
-80, 90, 100}.
-
-Blocks run:
-  A  — trajectory geometry (anchor dist, step size, tortuosity, modal coupling)
-  C  — cluster structure (silhouette + gap stats; HDBSCAN skipped at N=48)
-  E  — high-D structure (PR, rank-95; MI skipped, KSG broken at N=48)
-  G  — surface-form fidelity (BLEU, CheXpert recall, report length, per-pathology survival)
-  H  — training-cluster dynamics (entropy, dominant-fraction, top-mass)
-  I  — geometric mixing (kNN-to-training, MIPD, displacement alignment)
-  J  — autocorrelation + kNN persistence vs LAG (the headline result)
-
-Blocks NOT run:
-  B  — Lyapunov (handled separately by 20-anchor × 10-seed dedicated run)
-  D  — phase portraits (visualization only)
-  F  — basin × pathology test (no meaningful basins at N=48)
-
-Outputs to /n/groups/training/bmif203/AIM2/Experiments/attractor_loop/analysis_long/
-  long_horizon_results.json  — all numerical results per block per K
-  figures/*.pdf               — per-block summary figures
-"""
-
 import argparse
 import json
 import logging
@@ -63,9 +31,9 @@ LAGS_FOR_BLOCK_J = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
                      12, 14, 16, 18, 20, 25, 30, 35, 40, 45, 50]
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Data loading
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def load_long_trajectories(long_dir, K_max=100, min_iters_required=100):
     """Load all completed long-horizon trajectories.
@@ -152,9 +120,9 @@ def load_reference(ref_dir):
     return ref_img, ref_txt
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Helpers
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def normalize_rows(X):
     n = np.linalg.norm(X, axis=-1, keepdims=True)
@@ -189,9 +157,9 @@ def rank_95(Z_traj_centered):
     return int(np.searchsorted(cumvar, 0.95) + 1)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Block A — trajectory geometry
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def block_A_long(Z_img, Z_txt, A_img, A_txt, probe_ks):
     """At each probe K, compute per-trajectory geometric statistics treating
@@ -268,9 +236,9 @@ def block_A_long(Z_img, Z_txt, A_img, A_txt, probe_ks):
     return out
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Block C — cluster structure (silhouette + gap; skip HDBSCAN)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def block_C_long(Z_img, Z_txt, probe_ks, K_range=(2, 8), n_gap_refs=20, rng_seed=0):
     """At each probe K, compute silhouette and gap statistic on raw 256-d
@@ -342,9 +310,9 @@ def block_C_long(Z_img, Z_txt, probe_ks, K_range=(2, 8), n_gap_refs=20, rng_seed
     return out
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Block E — PR + rank-95 (skip MI; KSG broken at N=48)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def block_E_long(Z_img, Z_txt, probe_ks):
     logger.info("Block E — PR + rank-95 across K (MI skipped)")
@@ -371,9 +339,9 @@ def block_E_long(Z_img, Z_txt, probe_ks):
     return out
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Block G — surface-form fidelity
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def _bleu4_safe(reference, candidate):
     """Cumulative BLEU-4 with NLTK; returns 0 on degenerate inputs."""
@@ -404,7 +372,7 @@ CHEXPERT_LABELS = [
 def _get_chexpert_extractor(use_chexpert="auto"):
     """Mirror of analysis_surface_form.get_chexpert_extractor.
 
-    Walks up from this script's location to find an AIM2 base with a
+    Walks up from this script's location to find an base with a
     sibling GENERATION/chexpert/ directory, adds it to sys.path, then
     imports CheXpertLabelExtractor. On failure falls back to a minimal
     rule-based regex labeler.
@@ -423,9 +391,9 @@ def _get_chexpert_extractor(use_chexpert="auto"):
             candidates.append(walk)
             break
         walk = os.path.dirname(walk)
-    if "AIM2_BASE" in os.environ:
-        candidates.append(os.environ["AIM2_BASE"])
-    candidates.append("/n/groups/training/bmif203/AIM2")
+    if "BASE" in os.environ:
+        candidates.append(os.environ["BASE"])
+    candidates.append("../")
 
     added = []
     for c in candidates:
@@ -611,9 +579,9 @@ def block_G_long(findings, gt_findings, gt_labels_map, sids, probe_ks,
     return out
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Block H — training-cluster trajectory dynamics
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def block_H_long(Z_img, Z_txt, ref_img, ref_txt, probe_ks,
                   K_clust=15, rng_seed=0):
@@ -662,12 +630,12 @@ def block_H_long(Z_img, Z_txt, ref_img, ref_txt, probe_ks,
     return out
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Block I — geometric mixing (kNN-to-training, MIPD, displacement alignment)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def block_I_long(Z_img, Z_txt, ref_img, ref_txt, probe_ks, k_nn=10,
-                  rng_seed=42):
+                  rng_seed=100):
     """Per probe K (mirroring canonical analysis_knn_alignment.py):
       • mean cosine kNN-to-training distance (cohort-mean to k_nn nearest training points)
       • mean inter-point distance (MIPD) within cohort (cosine)
@@ -730,12 +698,12 @@ def block_I_long(Z_img, Z_txt, ref_img, ref_txt, probe_ks, k_nn=10,
     return out
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Block J — autocorrelation + kNN persistence vs LAG (HEADLINE)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def block_J_long(Z_img, Z_txt, K_max=100, lags=None, k_nn=10,
-                   late_iter_start=None, rng_seed=42):
+                   late_iter_start=None, rng_seed=100):
     """Compute autocorrelation and kNN-Jaccard persistence as functions of lag.
     Mirrors canonical analysis_local_persistence.py.
 
@@ -886,9 +854,9 @@ def block_J_long(Z_img, Z_txt, K_max=100, lags=None, k_nn=10,
     return out
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Figures
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def make_figures(results, out_dir, probe_ks, lags):
     """Per-block summary figures showing K-evolution + lag-evolution."""
@@ -1093,9 +1061,9 @@ def make_figures(results, out_dir, probe_ks, lags):
         logger.info(f"  → {fig_dir}/J_persistence_long.pdf")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Main
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -1106,7 +1074,7 @@ def parse_args():
     p.add_argument("--out_dir", required=True,
                     help="Output directory for results JSON + figures")
     p.add_argument("--data_csv", type=str,
-                    default="/n/groups/training/bmif203/AIM2/processed_data/processed_data.csv",
+                    default="..//processed_data/processed_data.csv",
                     help="Master CSV with CheXpert columns (Block G GT labels).")
     p.add_argument("--use_chexpert", choices=["auto", "extractor", "rulebased", "none"],
                     default="auto",
@@ -1124,7 +1092,7 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
 
     logger.info("=" * 60)
-    logger.info("AIM2 Long-horizon Analysis (K=100, N=48)")
+    logger.info("Long-horizon Analysis (K=100, N=48)")
     logger.info("=" * 60)
     for k, v in vars(args).items():
         logger.info(f"  {k}: {v}")

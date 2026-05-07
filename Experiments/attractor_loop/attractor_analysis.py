@@ -1,31 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 ChexGen — Main Analysis: Attractor Dynamics in Generative AI Loops
-========================================================================
-
-Reads:
-  results/chexgen_main/<study_id>/{anchor,img,text}_embed*.npy + metrics.json
-  results/chexgen_lyapunov/anchor_<sid>/seed_<j>/*.npy  (optional)
-  reference_embeddings/{img,txt}_embeds.npy + umap_*.pkl + meta.csv
-
-Produces:
-  figures/   — publication PDFs
-  tables/    — LaTeX-ready CSVs with key statistics
-  cache/     — intermediate analysis artifacts (clustering, projections, …)
-  analysis_results.json — all scalar metrics, signed off and cited in paper
-
-Block structure mirrors the analysis plan:
-
-  A. Trajectory geometry      (convergence, tortuosity, modality coupling)
-  B. Lyapunov stability       (system-wide + per-anchor basin radius)
-  C. Multi-basin structure    (clustering, ergodic component characterization)
-  D. Phase portrait           (2D UMAP, vector field, basin separatrix)
-  E. High-dim analysis        (effective dim, spectral, persistent homology, MI)
-  F. Clinical interpretation  (CheXpert profiling, bias quantification)
-
-Each block runs independently; pass --blocks to subset (e.g. --blocks A C F).
-"""
-
 import argparse
 import json
 import logging
@@ -51,7 +23,7 @@ from sklearn.neighbors import NearestNeighbors
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
-BASE_DIR = "/n/groups/training/bmif203/AIM2"
+BASE_DIR = "../"
 DEFAULT_MAIN     = f"{BASE_DIR}/Experiments/attractor_loop/results/chexgen_main"
 DEFAULT_LYAPUNOV = f"{BASE_DIR}/Experiments/attractor_loop/results/chexgen_lyapunov"
 DEFAULT_REFEMB   = f"{BASE_DIR}/Experiments/attractor_loop/reference_embeddings"
@@ -84,9 +56,9 @@ plt.rcParams.update({
 })
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  DATA LOADING
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def load_main_run(main_dir):
     """
@@ -286,9 +258,9 @@ def load_reference_embeddings(ref_dir):
             "img_2d":   img_2d,   "txt_2d":   txt_2d}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  BLOCK A — TRAJECTORY GEOMETRY
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def block_A_geometry(trajs, out_dir):
     """
@@ -438,9 +410,9 @@ def block_A_geometry(trajs, out_dir):
             "df_A": df_A}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  BLOCK B — LYAPUNOV STABILITY
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def block_B_lyapunov(trajs, lyap_data, basinB, out_dir):
     """
@@ -628,9 +600,9 @@ def block_B_lyapunov(trajs, lyap_data, basinB, out_dir):
             "c_global": c_global}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  BLOCK C — MULTI-BASIN STRUCTURE
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def _cluster_in_space(X, k_range, metric_for_silhouette, label_for_log):
     """Helper: run silhouette + gap + HDBSCAN k-means on a representation X.
@@ -645,24 +617,24 @@ def _cluster_in_space(X, k_range, metric_for_silhouette, label_for_log):
 
     for k_try in range(k_range[0], k_range[1] + 1):
         if k_try >= X.shape[0]: break
-        km = KMeans(n_clusters=k_try, random_state=42, n_init=10)
+        km = KMeans(n_clusters=k_try, random_state=100, n_init=10)
         labels = km.fit_predict(X)
         if len(np.unique(labels)) > 1:
             sil_scores[k_try] = float(
                 silhouette_score(X, labels, metric=metric_for_silhouette)
             )
 
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(100)
     n_null = 20
     bbox_min, bbox_max = X.min(axis=0), X.max(axis=0)
     for k_try in range(k_range[0], k_range[1] + 1):
         if k_try >= X.shape[0]: break
-        km = KMeans(n_clusters=k_try, random_state=42, n_init=10).fit(X)
+        km = KMeans(n_clusters=k_try, random_state=100, n_init=10).fit(X)
         Wk_log = np.log(km.inertia_ + 1e-12)
         Wk_null_logs = []
         for _ in range(n_null):
             null_data = rng.uniform(bbox_min, bbox_max, size=X.shape)
-            km_null = KMeans(n_clusters=k_try, random_state=42, n_init=5).fit(null_data)
+            km_null = KMeans(n_clusters=k_try, random_state=100, n_init=5).fit(null_data)
             Wk_null_logs.append(np.log(km_null.inertia_ + 1e-12))
         gap_scores[k_try] = float(np.mean(Wk_null_logs) - Wk_log)
 
@@ -682,7 +654,7 @@ def _cluster_in_space(X, k_range, metric_for_silhouette, label_for_log):
     except ImportError:
         logger.warning(f"  [{label_for_log}] hdbscan not installed — skipping density check")
 
-    km_final = KMeans(n_clusters=best_K, random_state=42, n_init=10).fit(X)
+    km_final = KMeans(n_clusters=best_K, random_state=100, n_init=10).fit(X)
     basin_labels = km_final.labels_
 
     logger.info(f"  [{label_for_log}] Silhouette: {sil_scores}")
@@ -756,7 +728,7 @@ def block_C_basins(trajs, A_results, out_dir, k_range=(2, 8)):
     logger.info("\n--- Config 2: PCA-20 euclidean ---")
     from sklearn.decomposition import PCA
     n_pca20 = min(20, N - 1)
-    pca20 = PCA(n_components=n_pca20, random_state=42).fit(endpoints_full)
+    pca20 = PCA(n_components=n_pca20, random_state=100).fit(endpoints_full)
     endpoints_pca20 = pca20.transform(endpoints_full)
     var20 = float(pca20.explained_variance_ratio_.sum())
     logger.info(f"  PCA-20 variance explained: {var20*100:.1f}%")
@@ -768,7 +740,7 @@ def block_C_basins(trajs, A_results, out_dir, k_range=(2, 8)):
     # ── Config 3: PCA-50 euclidean ────────────────────────────────────────────
     logger.info("\n--- Config 3: PCA-50 euclidean ---")
     n_pca50 = min(50, N - 1)
-    pca50 = PCA(n_components=n_pca50, random_state=42).fit(endpoints_full)
+    pca50 = PCA(n_components=n_pca50, random_state=100).fit(endpoints_full)
     endpoints_pca50 = pca50.transform(endpoints_full)
     var50 = float(pca50.explained_variance_ratio_.sum())
     logger.info(f"  PCA-50 variance explained: {var50*100:.1f}%")
@@ -819,7 +791,7 @@ def block_C_basins(trajs, A_results, out_dir, k_range=(2, 8)):
                     f"meanR={d_c.mean():.3f}  p95R={np.percentile(d_c, 95):.3f}")
 
     # ── Sliced-W2 to iter-K distribution (256-d, no PCA) ─────────────────────
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(100)
     n_proj = 100
     rnd_vecs = rng.normal(size=(n_proj, D))
     rnd_vecs /= np.linalg.norm(rnd_vecs, axis=1, keepdims=True)
@@ -956,9 +928,9 @@ def block_C_basins(trajs, A_results, out_dir, k_range=(2, 8)):
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  BLOCK D — PHASE PORTRAITS
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def block_D_phase_portrait(trajs, ref, A_results, C_results, out_dir):
     """
@@ -1095,9 +1067,9 @@ def block_D_phase_portrait(trajs, ref, A_results, C_results, out_dir):
             "proj_anchor_txt": proj_anchor_txt}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  BLOCK E — HIGH-DIMENSIONAL ANALYSIS
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def block_E_high_dim(A_results, out_dir):
     """
@@ -1161,9 +1133,9 @@ def block_E_high_dim(A_results, out_dir):
     Z_img_flat = Z_img.reshape(-1, D)  # (N*K, 256)
     Z_txt_flat = Z_txt.reshape(-1, D)
     pca_img_mi = PCA(n_components=min(n_components_mi, Z_img_flat.shape[0]-1),
-                      random_state=42).fit(Z_img_flat)
+                      random_state=100).fit(Z_img_flat)
     pca_txt_mi = PCA(n_components=min(n_components_mi, Z_txt_flat.shape[0]-1),
-                      random_state=42).fit(Z_txt_flat)
+                      random_state=100).fit(Z_txt_flat)
     logger.info(f"  PCA-{n_components_mi} fit on union of trajectory points: "
                 f"img var={pca_img_mi.explained_variance_ratio_.sum()*100:.1f}%  "
                 f"txt var={pca_txt_mi.explained_variance_ratio_.sum()*100:.1f}%")
@@ -1186,7 +1158,7 @@ def block_E_high_dim(A_results, out_dir):
             try:
                 mi = mutual_info_regression(
                     X0_p[:, d_idx:d_idx+1], Xk_p[:, d_idx],
-                    n_neighbors=3, random_state=42,
+                    n_neighbors=3, random_state=100,
                 )[0]
                 mis.append(mi)
             except Exception:
@@ -1215,7 +1187,7 @@ def block_E_high_dim(A_results, out_dir):
             try:
                 mi = mutual_info_regression(
                     X0_p[:, d_idx:d_idx+1], Xk_p[:, d_idx],
-                    n_neighbors=n_neighbors, random_state=42,
+                    n_neighbors=n_neighbors, random_state=100,
                 )[0]
                 mis.append(mi)
             except Exception:
@@ -1278,12 +1250,12 @@ def block_E_high_dim(A_results, out_dir):
             "MI_iter1_knn_sweep": MI_iter1_knn_sweep}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  BLOCK F — CLINICAL INTERPRETATION
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def _profile_permutation_test(profile_dist, basin_labels, n_permutations=1000,
-                                rng_seed=42):
+                                rng_seed=100):
     """Permutation test on patient pathology-profile distances.
 
     Args:
@@ -1412,7 +1384,7 @@ def block_F_clinical(trajs, A_results, C_results, out_dir, data_csv,
     # ── Permutation test: full cohort (with-positives subset) ────────────────
     logger.info(f"  Permutation test (n_perm={n_permutations}) — full cohort...")
     full_test = _profile_permutation_test(
-        profile_dist, basin_use, n_permutations=n_permutations, rng_seed=42,
+        profile_dist, basin_use, n_permutations=n_permutations, rng_seed=100,
     )
     logger.info(f"    T_observed         = {full_test['T_observed']:+.4f}")
     logger.info(f"    Mean-d same-basin  = {full_test['mean_d_same']:.4f}")
@@ -1592,9 +1564,9 @@ def block_F_clinical(trajs, A_results, C_results, out_dir, data_csv,
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  MAIN
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -1615,7 +1587,7 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
 
     logger.info("=" * 60)
-    logger.info("AIM2 ChexGen — Attractor Analysis")
+    logger.info("ChexGen — Attractor Analysis")
     logger.info("=" * 60)
     for k, v in vars(args).items():
         logger.info(f"  {k}: {v}")

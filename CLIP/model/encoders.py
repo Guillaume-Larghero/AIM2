@@ -1,13 +1,3 @@
-"""Image and text encoders, projection heads, and CheXpert classification head.
-
-Change from original:
-  timm.create_model() now receives img_size=config.data.IMAGE_SIZE (512).
-  timm interpolates pretrained 14×14 pos-embeddings (196 tokens) → 32×32
-  (1024 tokens). Patch projection and attention weights reused as-is.
-  IMAGE_FEATURE_DIM stays 768 (ViT-B hidden dim, resolution-independent).
-  AttentionPool is resolution-agnostic: it scores over token dim D, not count.
-"""
-
 import torch
 import torch.nn as nn
 import torchvision.models as models

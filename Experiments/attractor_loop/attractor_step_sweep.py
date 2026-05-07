@@ -1,36 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 — ChexGen Sampling-Step Sweep Ablation.
-
-Tests whether anchor-information loss is an artifact of insufficient
-diffusion sampling steps, or a genuine property of the coupled map.
-
-Hypothesis under test:
-  More denoising steps → cleaner image generation → better anchor
-  preservation. If MI loss is similar across num_steps ∈ {25, 50, 100},
-  the loss is intrinsic to the coupled map and NOT a sampling artifact.
-
-Design:
-  • 20 anchors selected from main run summary at quantiles 0.05..0.95
-    of iter-0 image cosine (same as Lyapunov v2 and CFG sweep).
-  • Each anchor run at num_steps ∈ {25, 50}. (num_steps=100 = main run.)
-  • 6 iterations, CFG = 4.0 (the main-run setting).
-  • Single seed per (anchor, num_steps).
-
-Total trajectories: 20 anchors × 2 step values = 40 trajectories.
-
-Compute per trajectory scales linearly with num_steps:
-  • 25 steps:  ~13 sec/iter × 6 iters = ~80 sec/traj
-  • 50 steps:  ~25 sec/iter × 6 iters = ~150 sec/traj
-Total compute: 20×80 + 20×150 = 4600 sec ≈ 77 min
-Plus model load (~3 min). Wallclock ~85 min.
-
-NOTE: ChexGenWrapper takes num_steps at LOAD time (we verified this in
-the original load_chexgen helper). Therefore we must reload chexgen for
-each step value. To minimize churn, the script processes one step value
-fully before swapping.
-"""
-
 import argparse
 import gc
 import json
@@ -96,7 +63,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BASE_DIR = "/n/groups/training/bmif203/AIM2"
+BASE_DIR = "../"
 DATA_CSV = f"{BASE_DIR}/processed_data/processed_data.csv"
 
 
@@ -108,7 +75,7 @@ def parse_args():
     p.add_argument("--n_iters",     type=int, default=5)
     p.add_argument("--cfg_scale",   type=float, default=4.0,
                    help="Hold CFG fixed at main-run value during step sweep.")
-    p.add_argument("--base_seed",   type=int, default=40000,
+    p.add_argument("--base_seed",   type=int, default=100,
                    help="Distinct from main run, Lyapunov (20000), CFG (30000).")
     p.add_argument("--main_dir",    type=str,
                    default=f"{BASE_DIR}/Experiments/attractor_loop/results/chexgen_main")
@@ -124,7 +91,7 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("=" * 60)
-    logger.info("AIM2 Step-Count Sweep Ablation")
+    logger.info("Step-Count Sweep Ablation")
     logger.info("=" * 60)
     for k, v in vars(args).items():
         logger.info(f"  {k}: {v}")

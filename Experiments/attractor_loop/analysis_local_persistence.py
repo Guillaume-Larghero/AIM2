@@ -1,59 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 — Local Trajectory Persistence (Block J).
-
-Posthoc analysis answering the question:
-
-  "Once trajectories converge to the attractor, do they STAY in their local
-   neighborhood (sticky regions, fine-grained structure) or do they
-   random-walk through the bounded attractor (true stochastic mixing)?"
-
-This is a more direct test of the stochastic-mixing hypothesis than
-Block I's displacement alignment. Block I told us trajectories drift in
-uncorrelated directions; Block J asks whether trajectories that are
-NEAR EACH OTHER stay near each other, or shuffle their neighborhoods
-every iteration.
-
-THREE METRICS, all computed on the already-existing N=1081 trajectories:
-
-  1. STEP SIZE vs COHORT SPREAD
-     Per iteration k, compute mean trajectory step size Δ_k = ||z_k - z_{k-1}||
-     and compare to the cohort-wide MIPD at iteration k. The ratio
-     Δ_k / MIPD_k tells us whether individual trajectories are stepping
-     across the entire attractor each iteration (≈ √2, full random walk)
-     or settling into specific points (<<1).
-
-  2. TRAJECTORY AUTOCORRELATION (within-trajectory)
-     For each trajectory, compute the cosine similarity between embeddings
-     at iteration k and iteration k+lag for lags 1..5. If individual
-     trajectories are sticky (stay in place), autocorrelation stays high
-     even at lag=5. If they random-walk, autocorrelation decays toward
-     the cohort-mean cosine value.
-
-  3. kNN NEIGHBORHOOD PERSISTENCE (between-trajectory)
-     At iteration k, find each trajectory's 10 nearest neighbors in the
-     cohort. At iteration k+1, find the new 10 nearest neighbors. Compute
-     the Jaccard overlap. If neighborhoods are persistent (same buddies
-     iteration after iteration), Jaccard stays high. If trajectories
-     shuffle neighbors, Jaccard drops to the random baseline (~10/N).
-
-  This is the smoking gun: high kNN persistence = "buddies stay buddies"
-  = sticky local structure even if no k-means clusters. Low kNN
-  persistence = pure stochastic mixing.
-
-OUTPUTS:
-  analysis/J_persistence/
-  ├── J_per_iter_metrics.csv     — long-format per-iter metrics
-  ├── J_persistence.npz          — raw arrays
-  └── J_persistence.pdf          — 3×2 figure (3 metrics × 2 modalities)
-
-USAGE:
-  python analysis_local_persistence.py \\
-      --main_dir   .../results/chexgen_main \\
-      --out_dir    .../analysis \\
-      --k_nn 10
-"""
-
 import argparse
 import json
 import logging
@@ -76,9 +20,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Helpers
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def normalize(X: np.ndarray) -> np.ndarray:
     """Row-wise L2 normalization. Defensive — embeddings should already be
@@ -91,7 +35,7 @@ def cohort_mipd(embs: np.ndarray, max_n: int = 2000,
                  rng: np.random.Generator = None):
     """Mean intra-pairwise cosine distance over a cohort. Subsamples if needed."""
     if rng is None:
-        rng = np.random.default_rng(42)
+        rng = np.random.default_rng(100)
     if len(embs) > max_n:
         idx = rng.choice(len(embs), max_n, replace=False)
         E = embs[idx]
@@ -106,9 +50,9 @@ def cohort_mipd(embs: np.ndarray, max_n: int = 2000,
     return float(d.mean())
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Three core metrics
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def step_size_vs_mipd(traj: np.ndarray, mipd_max: int = 2000,
                        rng: np.random.Generator = None):
@@ -130,7 +74,7 @@ def step_size_vs_mipd(traj: np.ndarray, mipd_max: int = 2000,
       ratio[K]:       step_mean / mipd
     """
     if rng is None:
-        rng = np.random.default_rng(42)
+        rng = np.random.default_rng(100)
     N, K, D = traj.shape
 
     step_mean = np.full(K, np.nan)
@@ -177,7 +121,7 @@ def trajectory_autocorrelation(traj: np.ndarray, lags: list = (1, 2, 3, 5)):
 
     # Baseline: mean cosine between random different-trajectory pairs at iter 0
     # (i.e. the prior distribution of cohort similarity, no trajectory link)
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(100)
     pair_idx = rng.choice(N, size=(2000, 2), replace=True)
     pair_idx = pair_idx[pair_idx[:, 0] != pair_idx[:, 1]]
     baseline = float((traj_n[pair_idx[:, 0], 0, :] *
@@ -247,9 +191,9 @@ def knn_neighborhood_persistence(traj: np.ndarray, k_nn: int = 10):
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Trajectory loader (mirrors the other Block scripts)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def load_trajectories(main_dir: str):
     metric_files = sorted(glob(os.path.join(main_dir, "*", "metrics.json")))
@@ -283,9 +227,9 @@ def load_trajectories(main_dir: str):
     return Z_img, Z_txt, study_ids
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Main
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -301,7 +245,7 @@ def run_modality(modality: str, traj: np.ndarray, args):
     N, K, D = traj.shape
     logger.info(f"\n[{modality.upper()}] {N} × {K} × {D}")
 
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(100)
 
     logger.info("  Computing step-size vs MIPD ...")
     a = step_size_vs_mipd(traj, mipd_max=args.mipd_max, rng=rng)
@@ -339,7 +283,7 @@ def main():
         os.makedirs(d, exist_ok=True)
 
     logger.info("=" * 60)
-    logger.info("AIM2 Local Trajectory Persistence (Block J)")
+    logger.info("Local Trajectory Persistence (Block J)")
     logger.info("=" * 60)
     for k, v in vars(args).items():
         logger.info(f"  {k}: {v}")

@@ -1,32 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 ChexGen — Preflight: embed reference corpus (train+val) for UMAP
-
-Embeds every train+val study in processed_data.csv via MedCLIP and persists:
-  reference_embeddings/img_embeds.npy        (N, 256) float32 L2-normed
-  reference_embeddings/txt_embeds.npy        (N, 256) float32 L2-normed
-  reference_embeddings/meta.csv              study_id, split, image_path, ...
-  reference_embeddings/umap_img.pkl          fitted umap.UMAP for image space
-  reference_embeddings/umap_txt.pkl          fitted umap.UMAP for text space
-  reference_embeddings/umap_img_2d.npy       (N, 2) the train embedding in 2D
-  reference_embeddings/umap_txt_2d.npy       (N, 2) the train embedding in 2D
-
-Resume: if any .npy already exists, that stage is skipped.
-Image embedding dominates wallclock (≈3-4 h on L40S for ~370k images at bs=64).
-Text embedding adds ~15 min. UMAP fitting adds ~20 min for 50k subsample,
-~hours for full corpus.
-
-UMAP fitting uses a stratified random subsample of 50k by default — UMAP's
-neighborhood structure stabilizes well before then, and full-corpus fits
-balloon umap.transform() time during analysis. The full embeddings are still
-saved and used for kNN density estimates.
-
-Why both modalities: image and text live in the same 256-d MedCLIP-projected
-space, but the training contrastive loss pulls paired (image, text) close —
-it does NOT enforce that all images and all text occupy the same region.
-Two separate phase portraits, one per modality, is the right framing.
-"""
-
 import argparse
 import gc
 import logging
@@ -45,10 +16,10 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from transformers import AutoTokenizer
 
-BASE_DIR     = "/n/groups/training/bmif203/AIM2"
+BASE_DIR     = "../"
 DATA_CSV     = f"{BASE_DIR}/processed_data/processed_data.csv"
 MEDCLIP_CKPT = f"{BASE_DIR}/CLIP/outputs/checkpoints/best_model.pth"
-HF_HOME      = "/n/scratch/users/g/gul075/.cache/huggingface"
+HF_HOME      = "/.cache/huggingface"
 OUT_DIR      = f"{BASE_DIR}/Experiments/attractor_loop/reference_embeddings"
 
 os.environ["HF_HOME"]                = HF_HOME
@@ -70,9 +41,9 @@ MEDCLIP_TRANSFORM = transforms.Compose([
 ])
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  DATASET
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 class CXRDataset(Dataset):
     """Lazy-loading; returns (image_tensor, idx). Idx is for re-aligning batches."""
@@ -93,9 +64,9 @@ class CXRDataset(Dataset):
             return torch.zeros(3, 512, 512), -idx - 1  # negative idx flags failure
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  MEDCLIP LOAD
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def load_medclip(device):
     logger.info(f"Loading MedCLIP from {MEDCLIP_CKPT}")
@@ -138,9 +109,9 @@ def load_medclip(device):
     return model, tokenizer
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  IMAGE EMBEDDING
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def embed_images(model, image_paths, *, device, batch_size=64, num_workers=4):
     """Streaming embed. Returns (N, 256) float32 + (N,) bool mask of successes."""
@@ -185,9 +156,9 @@ def embed_images(model, image_paths, *, device, batch_size=64, num_workers=4):
     return embeds, valid
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  TEXT EMBEDDING
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 @torch.no_grad()
 def embed_texts(model, tokenizer, texts, *, device, batch_size=128):
@@ -230,11 +201,11 @@ def embed_texts(model, tokenizer, texts, *, device, batch_size=128):
     return embeds, valid
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  UMAP
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
-def fit_umap(embeds, valid, *, name, fit_subsample=50_000, seed=42):
+def fit_umap(embeds, valid, *, name, fit_subsample=50_000, seed=100):
     """
     Fit UMAP on a stratified random subsample for tractable .transform() later.
     Project ALL valid embeddings into 2D using the fitted reducer.
@@ -276,9 +247,9 @@ def fit_umap(embeds, valid, *, name, fit_subsample=50_000, seed=42):
     return reducer, proj_2d
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  MAIN
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -289,7 +260,7 @@ def parse_args():
     p.add_argument("--num_workers",  type=int, default=4)
     p.add_argument("--umap_subsample", type=int, default=50_000,
                    help="UMAP fit on a random sample. Set 0 to fit on all valid.")
-    p.add_argument("--seed",         type=int, default=42)
+    p.add_argument("--seed",         type=int, default=100)
     p.add_argument("--max_n",        type=int, default=None,
                    help="DEBUG: cap total studies (default: all)")
     return p.parse_args()
@@ -310,7 +281,7 @@ def main():
     valid_path  = os.path.join(args.out_dir, "valid_masks.npz")
 
     logger.info("=" * 60)
-    logger.info("AIM2 Reference Embedding Preflight")
+    logger.info("Reference Embedding Preflight")
     logger.info("=" * 60)
 
     # ── Load metadata ─────────────────────────────────────────────────────────

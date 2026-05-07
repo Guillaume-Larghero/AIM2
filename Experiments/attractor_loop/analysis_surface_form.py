@@ -1,52 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 — Surface-Form Fidelity Analysis (Block G).
-
-Posthoc analysis quantifying how well GENERATED REPORTS preserve the
-content of the GROUND-TRUTH report across iterations, using metrics that
-are INDEPENDENT of the MedCLIP encoder.
-
-WHY THIS MATTERS FOR THE PAPER:
-  Our main results (Blocks A–F, H, I) all observe trajectories through
-  MedCLIP embeddings. A reviewer might object: "your encoder is biased —
-  what if MedCLIP just doesn't capture clinical info, but the reports
-  themselves preserve anchor identity?" This analysis tests that directly
-  using surface-form metrics on the generated text.
-
-METRICS:
-  1. BLEU-4 between generated FINDINGS at iter k and GT FINDINGS.
-     Surface-form lexical similarity. Drops to near-zero quickly if
-     MAIRA-2 produces templated reports for many anchors.
-  2. CheXpert label preservation:
-       recall_k    = |labels(report_k) ∩ labels(GT)| / |labels(GT)|
-       precision_k = |labels(report_k) ∩ labels(GT)| / |labels(report_k)|
-       jaccard_k   = |∩| / |∪|
-     These quantify how many of the original pathologies are still
-     mentioned in the iter-k report.
-  3. Per-pathology preservation: which pathologies survive iteration?
-
-OUTPUTS:
-  analysis/G_surface_form/
-  ├── G_per_iter_summary.csv         — mean ± std of all metrics per iter
-  ├── G_per_label_preservation.csv   — per-pathology survival rate
-  ├── G_per_trajectory.csv           — long-format full data
-  ├── G_surface_form.npz             — raw arrays
-  └── G_surface_form.pdf             — 4-panel figure
-
-USAGE:
-  python analysis_surface_form.py \\
-      --main_dir   .../results/chexgen_main \\
-      --out_dir    .../analysis \\
-      --data_csv   .../processed_data/processed_data.csv \\
-      --use_chexpert {auto|gen|none}     # how to label generated reports
-
-CHEXPERT LABELING:
-  We use the user's existing GENERATION.chexpert.extractor.CheXpertLabelExtractor
-  if importable; otherwise we fall back to a rule-based labeler that pattern-
-  matches the 14 standard CheXpert categories. Rule-based is a baseline only —
-  for the paper we recommend running with CheXpertLabelExtractor.
-"""
-
 import argparse
 import json
 import logging
@@ -70,9 +21,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  CheXpert-14 labels (standard order)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 CHEXPERT_LABELS = [
     "Atelectasis", "Cardiomegaly", "Consolidation", "Edema",
@@ -82,9 +33,9 @@ CHEXPERT_LABELS = [
 ]
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  BLEU implementation (no NLTK dependency)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def _ngrams(tokens, n):
     """Generator of n-gram tuples from a token list."""
@@ -124,9 +75,9 @@ def bleu4_smoothed(reference: str, hypothesis: str) -> float:
     return float(bp * math.exp(sum(log_precs) / 4))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Rule-based CheXpert fallback (only used if the real extractor isn't importable)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 # Rough-and-ready patterns. For the actual paper run we recommend the real
 # CheXpert NLP labeler (Stanford). These patterns capture obvious mentions
@@ -199,12 +150,12 @@ def get_chexpert_extractor():
     Returns (callable, name) where callable: str -> List[str] (positive labels).
     Falls back to rule-based regex on import failure.
 
-    Adds candidate AIM2 base paths to sys.path before import so this works
+    Adds candidate base paths to sys.path before import so this works
     regardless of which directory the script is invoked from. The script's
-    own location (Experiments/attractor_loop/) is a sub-folder of the AIM2
+    own location (Experiments/attractor_loop/) is a sub-folder of the 
     base, so we walk up from __file__ to find the GENERATION/ directory.
     """
-    # Find AIM2 base by walking up from this script's location until we
+    # Find base by walking up from this script's location until we
     # see a sibling GENERATION/ directory. This makes the import work no
     # matter where the script is invoked from.
     here = os.path.dirname(os.path.abspath(__file__))
@@ -216,9 +167,9 @@ def get_chexpert_extractor():
             break
         walk = os.path.dirname(walk)
     # Also add common environment hint as a fallback
-    if "AIM2_BASE" in os.environ:
-        candidates.append(os.environ["AIM2_BASE"])
-    candidates.append("/n/groups/training/bmif203/AIM2")  # known O2 location
+    if "BASE" in os.environ:
+        candidates.append(os.environ["BASE"])
+    candidates.append("../")  # known O2 location
 
     added_paths = []
     for c in candidates:
@@ -253,9 +204,9 @@ def get_chexpert_extractor():
         return rulebased_chexpert_labels, "rule-based (fallback)"
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  GT label loader — uses the existing CheXpert columns in processed_data.csv
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def load_gt_labels(data_csv: str):
     """Return a study_id -> set of positive CheXpert labels mapping.
@@ -287,9 +238,9 @@ def load_gt_labels(data_csv: str):
     return gt_map, available
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Main
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -319,7 +270,7 @@ def main():
         os.makedirs(d, exist_ok=True)
 
     logger.info("=" * 60)
-    logger.info("AIM2 Surface-Form Fidelity Analysis (Block G)")
+    logger.info("Surface-Form Fidelity Analysis (Block G)")
     logger.info("=" * 60)
     for k, v in vars(args).items():
         logger.info(f"  {k}: {v}")

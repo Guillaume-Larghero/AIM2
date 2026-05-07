@@ -12,7 +12,7 @@ import numpy as np
 @dataclass
 class PathConfig:
     """File paths and directories."""
-    BASE_DIR: str = "/n/groups/training/bmif203/AIM2"
+    BASE_DIR: str = "base/"
 
     DATA_CSV:    str = "processed_data/processed_data.csv"
     IMAGE_ROOT:  str = "cxr_jpg"
@@ -25,8 +25,8 @@ class PathConfig:
 
     def __post_init__(self):
         self.DATA_CSV    = os.path.join(self.BASE_DIR, self.DATA_CSV)
-        self.IMAGE_ROOT  = "/n/scratch/users/g/gul075/AIM_PHD/Foundation_in_clinical_data3/cxr_jpg"
-        self.REPORT_ROOT = "/n/scratch/users/g/gul075/AIM_PHD/Foundation_in_clinical_data3/cxr_reports"
+        self.IMAGE_ROOT  = "/cxr_jpg/"
+        self.REPORT_ROOT = "/cxr_reports/"
         self.OUTPUT_DIR     = os.path.join(self.BASE_DIR, self.OUTPUT_DIR)
         self.CHECKPOINT_DIR = os.path.join(self.BASE_DIR, self.CHECKPOINT_DIR)
         self.LOG_DIR        = os.path.join(self.BASE_DIR, self.LOG_DIR)
@@ -192,7 +192,7 @@ class EvaluationConfig:
 class SystemConfig:
     """System and hardware configuration."""
     DEVICE:           str  = "cuda" if torch.cuda.is_available() else "cpu"
-    SEED:             int  = 42
+    SEED:             int  = 100
     DETERMINISTIC:    bool = True
     BENCHMARK_CUDNN:  bool = True
     USE_TENSORBOARD:  bool = True

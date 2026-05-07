@@ -1,38 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 — Geometric Trajectory Analysis (Block I).
-
-Posthoc analysis of three complementary geometric properties along
-trajectories:
-
-  1. kNN distance to training manifold per iteration
-     "Are trajectories drifting INTO or OUT OF the training distribution
-      over time?"
-
-  2. Mean intra-pairwise distance (MIPD) per iteration
-     "Does the cohort spread out or contract over iterations?"
-
-  3. Displacement alignment per iteration step
-     "Are all trajectories drifting in the SAME direction (coherent
-      collapse) or random directions (diffuse drift)?"
-
-These complement Block A (per-trajectory drift) by giving us a population-
-level geometric picture of the dynamics.
-
-OUTPUTS:
-  analysis/I_geometry/
-  ├── I_geometry.npz                — raw arrays, all metrics, both modalities
-  ├── I_per_iter_metrics.csv        — long-format table for plotting
-  └── I_geometry.pdf                — 6-panel figure (3 metrics × 2 modalities)
-
-USAGE:
-  python analysis_knn_alignment.py \\
-      --main_dir   .../results/chexgen_main \\
-      --ref_dir    .../reference_embeddings \\
-      --out_dir    .../analysis \\
-      --k_nn 10
-"""
-
 import argparse
 import json
 import logging
@@ -55,9 +20,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Metric helpers
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def fit_knn(train_embs: np.ndarray, k: int = 10):
     """Fit a kNN index on training embeddings using cosine metric.
@@ -82,7 +47,7 @@ def mean_intra_pairwise_distance(embs: np.ndarray, max_n: int = 2000,
                                   rng: np.random.Generator = None):
     """Mean cosine distance within a cohort. Subsamples for speed."""
     if rng is None:
-        rng = np.random.default_rng(42)
+        rng = np.random.default_rng(100)
     if len(embs) > max_n:
         idx = rng.choice(len(embs), max_n, replace=False)
         E = embs[idx]
@@ -108,7 +73,7 @@ def displacement_alignment(embs_t0: np.ndarray, embs_t1: np.ndarray,
       < 0.0  : displacements antagonistic (unlikely in our setting)
     """
     if rng is None:
-        rng = np.random.default_rng(42)
+        rng = np.random.default_rng(100)
     disp = embs_t1 - embs_t0  # (N, D)
     norms = np.linalg.norm(disp, axis=1, keepdims=True) + 1e-12
     disp_n = disp / norms
@@ -129,9 +94,9 @@ def displacement_alignment(embs_t0: np.ndarray, embs_t1: np.ndarray,
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Loaders (mirrors analysis_training_clusters.py — kept inline for portability)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def load_trajectories(main_dir: str):
     metric_files = sorted(glob(os.path.join(main_dir, "*", "metrics.json")))
@@ -167,9 +132,9 @@ def load_trajectories(main_dir: str):
     return Z_img, Z_txt, study_ids
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Main
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -242,7 +207,7 @@ def run_modality(modality: str, ref_embs: np.ndarray,
 
 def main():
     args = parse_args()
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(100)
 
     cache_dir = os.path.join(args.out_dir, "cache")
     fig_dir   = os.path.join(args.out_dir, "figures")
@@ -251,7 +216,7 @@ def main():
         os.makedirs(d, exist_ok=True)
 
     logger.info("=" * 60)
-    logger.info("AIM2 Geometric Trajectory Analysis (Block I)")
+    logger.info("Geometric Trajectory Analysis (Block I)")
     logger.info("=" * 60)
     for k, v in vars(args).items():
         logger.info(f"  {k}: {v}")

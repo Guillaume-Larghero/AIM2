@@ -1,20 +1,3 @@
-"""Image transforms for MIMIC-CXR training and validation.
-
-Changes from original:
-  val:   Resize(256, BICUBIC) + CenterCrop(224)
-         → Resize((IMAGE_SIZE, IMAGE_SIZE), LANCZOS)   [direct, no crop]
-  train: interpolation BICUBIC → LANCZOS
-         ratio (0.9, 1.1)     → (1.0, 1.0)             [always square crop]
-  no-aug fallback: same direct LANCZOS resize, no CenterCrop
-
-Why no CenterCrop:
-  The original Resize(256)+CenterCrop(224) produced asymmetric field-of-view.
-  A portrait GT image (~2735×2790) lost ~12.5% of height from both ends after
-  crop; a square generated image (512×512) lost only ~6.25%. The direct square
-  resize treats all inputs identically, which is required for fair embedding
-  comparisons between GT scans and FLUX.2 outputs.
-"""
-
 from torchvision import transforms
 
 

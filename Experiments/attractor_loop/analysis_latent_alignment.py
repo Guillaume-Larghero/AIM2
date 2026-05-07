@@ -1,51 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 — Block L: Latent space alignment (image-text embedding coherence).
-
-============================================================================
-QUESTION
-============================================================================
-As the attractor loop iterates, do image embeddings and text embeddings
-remain aligned (high cosine similarity) or diverge into independent modes?
-
-This tests whether the "elevator-music attractor" is a COUPLED attractor
-(both modalities converge to the same degenerate mode) or DECOUPLED
-(text and image have separate attractor basins).
-
-============================================================================
-HYPOTHESIS
-============================================================================
-Iteration 0 (ground truth): Real images + real reports are semantically
-                           aligned. Expect cos_sim ≈ 0.60–0.75.
-
-Early iterations (1–10):   ChexGen + MAIRA still coherent. Both generate
-                           artifacts in tandem. Expect high alignment.
-
-Mid iterations (20–50):    Image and text start degrading. May diverge:
-                           • Coupled: both get stuck on same mode
-                             → cos_sim increases (reconvergence)
-                           • Decoupled: text bias ≠ image artifact
-                             → cos_sim decreases (divergence)
-
-Late iterations (50–100):  Steady-state attractor regime. Alignment reveals
-                           mode structure:
-                           • HIGH cos_sim → coupled attractors
-                           • LOW cos_sim → independent attractors
-
-============================================================================
-INPUT
-============================================================================
-  Trajectory directory (chexgen_long with K=100)
-  Per-study embeddings: img_embed_iter_NNN.npy, text_embed_iter_NNN.npy
-
-============================================================================
-OUTPUT
-============================================================================
-  block_L_results.json       — cos_sim statistics per iteration
-  figures/L_*.png            — cosine similarity trajectories + distributions
-  tables/L_*.tsv             — per-study cos_sim values
-"""
-
 import argparse
 import json
 import logging
@@ -67,9 +19,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Helpers
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def cosine_similarity(vec1, vec2):
     """Cosine similarity in [0, 1] (1 = identical, 0 = orthogonal)."""
@@ -154,9 +106,9 @@ def compute_statistics(cos_sims):
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Main analysis
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def main():
     parser = argparse.ArgumentParser(
@@ -184,7 +136,7 @@ def main():
     os.makedirs(args.figures_dir, exist_ok=True)
 
     logger.info("=" * 70)
-    logger.info("AIM2 Block L — Latent space alignment (image-text embedding coherence)")
+    logger.info("Block L — Latent space alignment (image-text embedding coherence)")
     logger.info("=" * 70)
     for k, v in vars(args).items():
         logger.info(f"  {k}: {v}")

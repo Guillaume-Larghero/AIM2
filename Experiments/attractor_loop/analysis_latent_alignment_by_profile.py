@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AIM2 — Block L (Profile): Cosine similarity stratified by individual CheXpert profile.
+— Block L (Profile): Cosine similarity stratified by individual CheXpert profile.
 
 ============================================================================
 QUESTION
@@ -84,7 +84,7 @@ def main():
     os.makedirs(args.figures_dir, exist_ok=True)
 
     logger.info("=" * 70)
-    logger.info("AIM2 Block L (Profile) — Cosine similarity by CheXpert profile")
+    logger.info("Block L (Profile) — Cosine similarity by CheXpert profile")
     logger.info("=" * 70)
 
     # Load Block K results
@@ -149,7 +149,7 @@ def main():
         total_size = sum(tp.get("size", 0) for tp in top_profile_data)
 
         sids_list = list(all_cos_sims.keys())
-        rng = np.random.RandomState(42)  # Fixed seed for reproducibility
+        rng = np.random.RandomState(100)  # Fixed seed for reproducibility
 
         for tp in top_profile_data:
             profile_label = tp.get("label", "unknown")

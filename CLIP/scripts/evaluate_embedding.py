@@ -1,12 +1,3 @@
-#!/usr/bin/env python3
-"""
-Evaluate learned embedding space with retrieval metrics and visualizations.
-
-Usage:
-    python evaluate_embeddings.py --checkpoint /checkpoints/best_model.pth
-    python evaluate_embeddings.py --checkpoint best_model.pth --use_test --n_samples 1000
-"""
-
 import os
 import json
 import argparse
@@ -274,9 +265,9 @@ def plot_embedding_space(image_embeds, text_embeds, labels, output_dir, method='
 
     print(f"  Running {method.upper()}...")
     if method == 'tsne':
-        embeds_2d = TSNE(n_components=2, random_state=42, perplexity=30).fit_transform(all_embeds)
+        embeds_2d = TSNE(n_components=2, random_state=100, perplexity=30).fit_transform(all_embeds)
     else:
-        embeds_2d = umap.UMAP(n_components=2, random_state=42).fit_transform(all_embeds)
+        embeds_2d = umap.UMAP(n_components=2, random_state=100).fit_transform(all_embeds)
 
     img_2d = embeds_2d[:n]
     txt_2d = embeds_2d[n:]

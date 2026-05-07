@@ -1,73 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 — Disease Attractors in Chest X-Ray Generation (ChexGen variant)
-Attractor Loop — Pilot / Full Test Set Run
-
-Pipeline per study, per iteration k ∈ {0, 1, ..., n_iters}:
-  current_image (PIL RGB 512×512)
-    ├─ LANCZOS 518×518 ──▶ MAIRA-2 ──▶ findings_k         (CPU↔GPU swap)
-    └─ MEDCLIP transform   ──▶ MedCLIP image encoder ──▶ img_embed_k  (256-d L2)
-
-  findings_k
-    ├─ T5Embedder.clean_caption (lowercase + strip URLs/punct) ──▶ cleaned
-    │   └─ tokenize(max=120) ──▶ T5EncoderModel ──▶ caption_embs (1,120,4096) BF16
-    │       └─ .float() ──▶ DiT.y_embedder ──▶ (1,1152) hidden
-    ├─ p_sample_loop(model.forward_with_cfg, ...) ──▶ latent (1,4,64,64)
-    │   └─ VAE decode ──▶ next image (1,3,512,512) in [-1,1]
-    └─ MedCLIP text encoder (uses ORIGINAL findings, not cleaned) ──▶ text_embed_k
-
-  Iteration k=0 is the bootstrap: GT image → MAIRA-2 → ChexGen.
-  Iteration k≥1 is the autoregressive loop: gen_{k-1} → MAIRA-2 → ChexGen.
-
-Metrics tracked per iteration (in metrics.json):
-  image_cosine    = cos(anchor_img_embed_GT,  img_embed_k)
-  text_cosine     = cos(anchor_text_embed_GT, text_embed_k)
-  embed_l2        = ||anchor_img_embed_GT - img_embed_k||_2
-  image_evolution = cos(img_embed_{k-1},  img_embed_k)        [k≥1]
-  text_evolution  = cos(text_embed_{k-1}, text_embed_k)       [k≥1]
-
-Pilot diagnostics tracked per iteration (additionally):
-  - findings: original/cleaned char + word counts
-  - T5 token counts (natural vs used), was_truncated flag, tokens_lost
-  - DiT sampling wallclock, VAE decode wallclock
-  - generated image value range
-  - embedding norms (sanity check L2≈1.0)
-  - peak GPU memory snapshot
-
-Design decisions / gotchas confirmed against ChexGen source:
-  - ChexGen weight  : finetune_impression_512.pth (IMPRESSION-conditioned, not FINDINGS).
-                      We use it with FINDINGS prompts → documented OOD limitation.
-  - T5 encoder      : DeepFloyd/t5-v1_1-xxl, BF16 default. token_num=120 (fixed by training).
-                      MAIRA-2 FINDINGS routinely exceed 120 tokens → truncation IS expected.
-  - DiT             : DiT_XL_2, depth=28, hidden=1152, patch=2, fp32, fp32_attn=True.
-                      input_size=64 → latent (1,4,64,64) → VAE → 512×512.
-                      pos_embed_scale=2.0 (NOT default 1.0).
-                      learn_sigma=True → 8-channel output; CFG on first 3 channels only
-                      (DiT codebase quirk inherited).
-  - VAE             : stabilityai/sd-vae-ft-ema, latent scale 0.18215.
-  - CFG             : default 4.0, num_steps default 100. Standard doubled-batch trick.
-  - DDP             : NOT needed. We call model.forward_with_cfg directly (no .module).
-  - Cast            : T5 outputs BF16, DiT y_embedder MLP is FP32 → explicit y.float() before
-                      passing into forward_with_cfg.
-  - MedCLIP         : 512×512 (matches ChexGen output → no resize). Bio_ClinicalBERT for text,
-                      USE_FINDINGS_ONLY=True at training time. Embeds ORIGINAL findings, not
-                      the lowercased cleaned ones.
-  - MAIRA-2         : 518×518 LANCZOS input, get_grounding=False, max_new_tokens=300.
-                      transformers==4.51.3 pinned. num_additional_image_tokens=1 for DINO CLS.
-                      Kept on CPU, swapped to GPU per inference call.
-
-Memory budget (L40S 48 GB):
-  Resident GPU : T5-xxl BF16 (~11 GB) + DiT FP32 (~2.7 GB) + VAE (~0.3 GB) + MedCLIP (~1.3 GB)
-                 ≈ 15 GB
-  Transient    : MAIRA-2 swaps in (~14 GB) during ~13 s of report generation
-  Peak         : ~30 GB → 18 GB headroom
-
-Usage (pilot):
-  python Experiments/attractor_loop/attractor_loop_chexgen.py \
-      --n_samples 5 --n_iters 5 --num_steps 100 --cfg_scale 4.0 --seed 42 \
-      --output_dir Experiments/attractor_loop/results/chexgen_pilot
-"""
-
 import argparse
 import gc
 import json
@@ -87,13 +17,13 @@ from torchvision import transforms
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoProcessor
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-BASE_DIR     = "/n/groups/training/bmif203/AIM2"
+BASE_DIR     = "../"
 DATA_CSV     = f"{BASE_DIR}/processed_data/processed_data.csv"
 MEDCLIP_CKPT = f"{BASE_DIR}/CLIP/outputs/checkpoints/best_model.pth"
 CHEXGEN_DIR  = f"{BASE_DIR}/ChexGen"
 CHEXGEN_CFG  = f"{CHEXGEN_DIR}/configs/model.py"
 CHEXGEN_CKPT = f"{CHEXGEN_DIR}/weights/finetune_impression_512.pth"
-HF_HOME      = "/n/scratch/users/g/gul075/.cache/huggingface"
+HF_HOME      = "/.cache/huggingface"
 
 os.environ["HF_HOME"]                = HF_HOME
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -129,9 +59,9 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32       = True
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  IMAGE TRANSFORMS
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 # MedCLIP: direct LANCZOS resize to 512px + ImageNet normalisation.
 # ChexGen output is already 512×512 → for generated images this resize is a no-op.
@@ -170,9 +100,9 @@ def latent_image_to_pil(image_tensor: torch.Tensor) -> Image.Image:
     return Image.fromarray(arr, mode="RGB")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  MEDCLIP
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def load_medclip(device: torch.device):
     """Load MedCLIP from checkpoint with all config overrides applied."""
@@ -243,9 +173,9 @@ def cosine_sim(a: torch.Tensor, b: torch.Tensor) -> float:
     return float(F.cosine_similarity(a.unsqueeze(0), b.unsqueeze(0)).item())
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  MAIRA-2
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def load_maira():
     """
@@ -345,9 +275,9 @@ def run_maira(generator, pil_img: Image.Image) -> str:
         os.remove(tmp_path)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  ChexGen
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 class ChexGenWrapper:
     """
@@ -539,7 +469,7 @@ def load_chexgen(device: torch.device, num_steps: int) -> ChexGenWrapper:
     # in HOME (tight quota). We explicitly point it at scratch. The path
     # contains the model dir directly, NOT a 't5-v1_1-xxl' subdir — T5Embedder
     # appends that itself when local_cache=True.
-    t5_cache_dir = "/n/scratch/users/g/gul075/.cache/IF_"
+    t5_cache_dir = "/.cache/IF_"
     t5 = T5Embedder(device=device, cache_dir=t5_cache_dir)
     logger.info(f"  ✓ T5Embedder loaded: dir_or_name={t5.dir_or_name}  "
                 f"dtype={t5.torch_dtype}  device={t5.device}  "
@@ -553,9 +483,9 @@ def load_chexgen(device: torch.device, num_steps: int) -> ChexGenWrapper:
     return ChexGenWrapper(dit, vae, t5, diffusion, latent_size, token_num, device)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  SELF-TEST
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def run_self_test(chexgen, medclip, tokenizer, device):
     """
@@ -569,7 +499,7 @@ def run_self_test(chexgen, medclip, tokenizer, device):
                    "by mediastinal fat. No pleural abnormality.")
     t0 = time.time()
     pil, diag = chexgen.generate(
-        test_prompt, seed=42, num_steps=chexgen.diffusion.num_timesteps,
+        test_prompt, seed=100, num_steps=chexgen.diffusion.num_timesteps,
         cfg_scale=4.0,
     )
     logger.info(f"  ChexGen wallclock={time.time()-t0:.1f}s  "
@@ -598,9 +528,9 @@ def run_self_test(chexgen, medclip, tokenizer, device):
     logger.info("─" * 60 + "\n")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  ATTRACTOR LOOP (single study)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def run_loop(
     *,
@@ -761,9 +691,9 @@ def run_loop(
     return metrics
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  MAIN
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -783,7 +713,7 @@ def parse_args():
     p.add_argument("--num_steps",   type=int,   default=100,
                    help="ChexGen sampling steps. Default: 100 (their published).")
     p.add_argument("--cfg_scale",   type=float, default=4.0)
-    p.add_argument("--seed",        type=int,   default=42)
+    p.add_argument("--seed",        type=int,   default=100)
     p.add_argument("--data_csv",    type=str,   default=DATA_CSV)
     p.add_argument("--output_dir",  type=str,
                    default=f"{BASE_DIR}/Experiments/attractor_loop/results/chexgen_pilot")
@@ -799,7 +729,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     logger.info("=" * 60)
-    logger.info("AIM2 ChexGen Attractor Loop")
+    logger.info("ChexGen Attractor Loop")
     logger.info("=" * 60)
     for k, v in vars(args).items():
         logger.info(f"  {k}: {v}")

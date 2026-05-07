@@ -1,295 +1,224 @@
-# AIM2: Attractor Dynamics in Medical Vision-Language Generation
+# Attractor
 
-A comprehensive study of generative AI stability in medical imaging through the lens of dynamical systems theory, applying Lyapunov analysis to understand how iterative vision-language generation loops converge to stable states.
+Code for training the MedCLIP-XR-512 observer and running the MAIRA-2 <-> ChexGen
+attractor-loop experiments.
 
-## Overview
+## What Is Here
 
-This project investigates the phenomenon of **model collapse and attractor dynamics** in medical generative AI. Specifically, we study how iterative loops of chest X-ray (CXR) generation and medical report generation converge to a finite set of clinical "attractors" - stable patterns in the embedding space.
-
-### Key Questions
-
-1. **Do medical vision-language generation loops exhibit attractor dynamics?** How do iterative image→text→image loops behave?
-2. **Can we characterize attractors using dynamical systems metrics?** What do Lyapunov exponents, fixed points, and basins of attraction tell us?
-3. **What is the clinical significance?** Do attractors correspond to high-frequency pathological patterns or are they artifacts of the models?
-4. **Can we predict convergence?** Given an initial image, can we predict which attractor it will converge to?
-5. **How does augmentation help?** What impact does Retrieval-Augmented Generation (RAG) have on attractor dynamics?
-
-## Project Structure
-
-```
-AIM2/
-├── CLIP/                    # Vision-language embedding model training
-│   ├── config/              # Model configuration files
-│   ├── data/                # Data loaders and preprocessing
-│   ├── model/               # CLIP-based architecture
-│   ├── loss/                # Contrastive loss functions
-│   ├── training/            # Training scripts
-│   └── scripts/             # Utility scripts
-├── GENERATION/              # Image and text generation pipelines
-│   ├── pipeline/            # Generation loops and orchestration
-│   ├── llm/                 # LLM-based report generation
-│   ├── chexpert/            # CheXpert label extraction and validation
-│   └── scripts/             # Generation experiment scripts
-├── DIFFUSION/               # Diffusion model components
-│   ├── train_lora.py        # LoRA-based fine-tuning
-│   ├── config.yaml          # Diffusion model configuration
-│   └── TECHNIQUES.md        # Technical notes on prompt engineering
-├── ChexGen/                 # Generative foundation model for CXR
-│   ├── configs/             # Model and training configurations
-│   ├── radiffuser/          # Core diffusion transformer implementation
-│   ├── scripts/             # Sampling and generation scripts
-│   └── tools/               # Entry points (sample.py, train.py)
-├── RAG/                     # Retrieval-Augmented Generation
-│   └── requirements.txt     # Dependencies for RAG pipeline
-├── MAIRA/                   # Medical AI Report Assistant
-│   └── maira.py             # Core MAIRA implementation
-├── dataset/                 # Data processing and preparation
-│   ├── dataset.py           # Dataset loading and management
-│   └── preprocess.py        # Preprocessing pipelines
-├── Experiments/             # Experimental configurations and logs
-├── Results/                 # Analysis outputs and figures
-├── models/                  # Pre-trained model weights
-└── logs/                    # Training and experiment logs
+```text
+CLIP/                         Train and evaluate the MedCLIP-XR-512 model
+GENERATION/chexpert/          CheXpert label extraction helpers
+Experiments/attractor_loop/   Loop generation, analysis, and figure scripts
 ```
 
-## Quick Start
+## Setup
 
-### Prerequisites
+Run from the repository root:
 
-- Python 3.8+
-- CUDA 11.8+ (for GPU acceleration)
-- 500GB+ disk space (for datasets and model weights)
-
-### Installation
-
-1. **Clone the repository:**
-   ```bash
-   cd /n/groups/training/bmif203/AIM2
-   ```
-
-2. **Create a virtual environment:**
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
-
-3. **Install dependencies:**
-   ```bash
-   # Core dependencies
-   pip install torch>=2.0 torchvision transformers diffusers
-   
-   # Install component-specific requirements
-   pip install -r CLIP/requirements.txt
-   pip install -r GENERATION/requirements.txt
-   pip install -r RAG/requirements.txt
-   
-   # For ChexGen
-   cd ChexGen && pip install -r requirements.txt && cd ..
-   ```
-
-## Components
-
-### 1. CLIP Module
-**Vision-Language Embedding Learning**
-
-Trains a contrastive model on MIMIC-CXR data to learn joint embeddings of chest X-rays and their corresponding medical reports.
-
-**Key files:**
-- `CLIP/training/` - Main training loop
-- `CLIP/model/` - Architecture definitions
-- `CLIP/data/` - Dataset loaders
-
-**Example usage:**
 ```bash
-python CLIP/training/train.py --config CLIP/config/default.yaml
+export PYTHONPATH="$PWD:${PYTHONPATH}"
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
 ```
 
-### 2. GENERATION Module
-**Iterative Generation Pipelines**
+You also need the ChexGen and MAIRA-2 dependencies/weights available locally.
 
-Orchestrates iterative loops of image generation and text generation, tracking embeddings and trajectories through the embedding space.
+Before running, update the local path constants near the top of the scripts if
+needed, especially:
 
-**Supported configurations:**
-- **Config A:** Image → Report → Image → ... (basic loop)
-- **Config B:** Image → [RAG] → Report → [RAG] → Image → ... (RAG-augmented)
-- **Config C:** Image → Report → Image (single modality fixed)
+```text
+BASE_DIR
+DATA_CSV
+MEDCLIP_CKPT
+CHEXGEN_DIR
+CHEXGEN_CKPT
+HF_HOME
+```
 
-**Key files:**
-- `GENERATION/pipeline/` - Generation loop orchestration
-- `GENERATION/llm/` - Report generation (using LLaVA, Med-Flamingo, etc.)
-- `GENERATION/scripts/` - Experiment runners
+The expected CSV is `processed_data/processed_data.csv` and should include:
 
-**Example usage:**
+```text
+split, study_id, subject_id, dicom_id, image_path, findings, has_findings
+```
+
+CheXpert label columns are optional but needed for the pathology-profile
+analyses.
+
+## 1. Train The CLIP Model
+
+Edit `CLIP/config/config.py` so `PathConfig.BASE_DIR` points to the directory
+containing `processed_data/processed_data.csv`.
+
 ```bash
-python GENERATION/scripts/run_experiment.py --config GENERATION/config/basic_loop.yaml
+python3 -m CLIP.scripts.train_CLIP \
+  --epochs 100 \
+  --batch_size 8
 ```
 
-### 3. DIFFUSION Module
-**Diffusion-based CXR Synthesis**
+The main checkpoint is written to:
 
-Fine-tunes diffusion models (Stable Diffusion, DiT) for medical image generation with LoRA adapters and classifier-free guidance.
+```text
+CLIP/outputs/checkpoints/best_model.pth
+```
 
-**Key files:**
-- `DIFFUSION/train_lora.py` - LoRA fine-tuning script
-- `DIFFUSION/config.yaml` - Model and training hyperparameters
+Optional evaluation:
 
-### 4. ChexGen Module
-**Foundation Model for Chest Radiography**
-
-A pre-trained latent diffusion transformer (DiT) specifically designed for realistic chest X-ray synthesis with text conditioning.
-
-**Features:**
-- Text-conditioned generation
-- Mask-based inpainting (in development)
-- Bounding-box-based editing (in development)
-
-**Usage:**
 ```bash
-cd ChexGen
-bash scripts/sample.sh
+python3 -m CLIP.scripts.evaluate_embedding \
+  --checkpoint CLIP/outputs/checkpoints/best_model.pth \
+  --output_dir CLIP/outputs/evaluation \
+  --use_test
 ```
 
-See [ChexGen/README.md](ChexGen/README.md) for detailed documentation.
+## 2. Run The Main Attractor Loop
 
-### 5. RAG Module
-**Retrieval-Augmented Generation**
+Main K=10 run:
 
-Implements RAG systems that retrieve relevant medical examples from a knowledge base to improve report generation quality and consistency.
+```bash
+python3 Experiments/attractor_loop/attractor_loop_chexgen.py \
+  --data_csv processed_data/processed_data.csv \
+  --use_all \
+  --n_iters 10 \
+  --num_steps 100 \
+  --cfg_scale 4.0 \
+  --seed 100 \
+  --skip_self_test \
+  --output_dir Experiments/attractor_loop/results/chexgen_main
+```
 
-### 6. MAIRA Module
-**Medical AI Report Assistant**
+For a cluster array, add chunking:
 
-Specialized LLM-based module for generating clinically coherent medical reports given chest X-ray embeddings.
+```bash
+python3 Experiments/attractor_loop/attractor_loop_chexgen.py \
+  --data_csv processed_data/processed_data.csv \
+  --use_all \
+  --chunk_idx 0 \
+  --n_chunks 60 \
+  --n_iters 10 \
+  --num_steps 100 \
+  --cfg_scale 4.0 \
+  --seed 100 \
+  --skip_self_test \
+  --output_dir Experiments/attractor_loop/results/chexgen_main
+```
 
-## Experimental Workflow
+## 3. Extend To K=100
 
-### Phase 1: Setup
-1. Prepare MIMIC-CXR dataset (requires credentialed access)
-2. Train or load pre-trained CLIP model
-3. Set up diffusion models for image generation
-4. Configure LLM for report generation
+This continues the completed K=10 run.
 
-### Phase 2: Trajectory Generation
-1. Select diverse initial CXR images (stratified by pathology)
-2. Run generation loops (100+ iterations per trajectory)
-3. Log embeddings at each iteration
-4. Track convergence metrics
+```bash
+python3 Experiments/attractor_loop/attractor_loop_chexgen_long.py \
+  --data_csv processed_data/processed_data.csv \
+  --use_all \
+  --K_existing 10 \
+  --n_iters 100 \
+  --num_steps 100 \
+  --cfg_scale 4.0 \
+  --base_seed 100 \
+  --main_dir Experiments/attractor_loop/results/chexgen_main \
+  --output_dir Experiments/attractor_loop/results/chexgen_long
+```
 
-### Phase 3: Dynamical Systems Analysis
-1. **Lyapunov Exponent Estimation:** Measure sensitivity to initial conditions
-2. **Fixed Point Identification:** Cluster final states to find attractors
-3. **Basin of Attraction Mapping:** Determine which initial conditions lead to each attractor
-4. **Phase Portrait Construction:** Visualize the embedding space dynamics
+For a cluster array, add:
 
-### Phase 4: Clinical Interpretation
-1. Extract reports/images at identified attractors
-2. Have radiologists annotate clinical content
-3. Correlate with ICD codes and pathology labels
-4. Analyze how different diseases behave
+```bash
+--chunk_idx 0 --n_chunks 60
+```
 
-## Key Metrics
+## 4. Run Seed Replicates
 
-### Convergence Metrics
-- **Inter-step distance:** `d(t) = ||e(t+1) - e(t)||`
-- **Convergence rate:** `λ = lim_{t→∞} (1/t) log(d(t)/d(0))`
-- **Time to convergence:** Iterations until stabilization
+Used for the per-anchor divergence-rate analysis.
 
-### Dynamical Systems Metrics
-- **Lyapunov exponents:** Maximum Lyapunov exponent (λ_max)
-- **Fixed point stability:** Distance to nearest attractor
-- **Basin entropy:** Complexity of basin of attraction boundaries
+```bash
+python3 Experiments/attractor_loop/attractor_lyapunov_seeds.py \
+  --data_csv processed_data/processed_data.csv \
+  --main_dir Experiments/attractor_loop/results/chexgen_main \
+  --n_anchors 20 \
+  --n_seeds 10 \
+  --n_iters 100 \
+  --num_steps 100 \
+  --cfg_scale 4.0 \
+  --base_seed 100 \
+  --output_dir Experiments/attractor_loop/results/lyapunov_seeds
+```
 
-### Clinical Metrics
-- **Attractor purity:** Fraction of samples at each attractor belonging to same pathology class
-- **Diagnostic coverage:** What percentage of conditions converge to attractors
-- **RAG impact:** How does augmentation change attractor structure
+## 5. Build Reference Embeddings
 
-## Dataset Requirements
+```bash
+python3 Experiments/attractor_loop/preflight_embed_corpus.py \
+  --data_csv processed_data/processed_data.csv \
+  --splits train validate \
+  --batch_size 64 \
+  --num_workers 4 \
+  --seed 100 \
+  --out_dir Experiments/attractor_loop/reference_embeddings
+```
 
-- **MIMIC-CXR:** 377,110 images with free-text reports (requires PhysioNet credentialed access)
-- **MIMIC-IV:** Associated clinical notes and ICD codes
-- **CheXpert:** Optional for label extraction (some images overlap with MIMIC-CXR)
+## 6. Run Analyses
 
-### Getting Access
+```bash
+mkdir -p Experiments/attractor_loop/analysis_long
+```
 
-1. Complete [CITI training](https://about.citiprogram.org/)
-2. Request credentialed access via [PhysioNet](https://physionet.org/settings/credentialing/)
-3. Download datasets and place in `dataset/` directory
+Main dynamics:
 
-## Computational Requirements
+```bash
+python3 Experiments/attractor_loop/attractor_analysis.py \
+  --main_dir Experiments/attractor_loop/results/chexgen_main \
+  --lyapunov_dir Experiments/attractor_loop/results/lyapunov_seeds \
+  --ref_dir Experiments/attractor_loop/reference_embeddings \
+  --data_csv processed_data/processed_data.csv \
+  --out_dir Experiments/attractor_loop/analysis_long \
+  --blocks A B C E F
+```
 
-| Resource | Requirement |
-|----------|------------|
-| **GPU** | A100 40GB or RTX 6000 Ada (preferred) |
-| **RAM** | 128GB+ |
-| **Storage** | 500GB+ (for data, embeddings, checkpoints) |
-| **Compute Time** | ~200 GPU-hours for full experiment suite |
+Attractor modes and OOV profiles:
 
-## Configuration
+```bash
+python3 Experiments/attractor_loop/analysis_attractor_modes.py \
+  --trajectory_dir Experiments/attractor_loop/results/chexgen_long \
+  --data_csv processed_data/processed_data.csv \
+  --out_dir Experiments/attractor_loop/analysis_long \
+  --probe_iters 0,1,5,10,20,30,50,70,100 \
+  --use_chexpert auto
+```
 
-Configuration files are YAML-based and located in subdirectory `config/` folders:
+Long-horizon geometry:
 
-- `CLIP/config/` - Model architecture and training hyperparameters
-- `GENERATION/config/` - Pipeline specifications and loop configurations
-- `DIFFUSION/config.yaml` - Diffusion model settings
-- `ChexGen/configs/` - ChexGen model configurations
+```bash
+python3 Experiments/attractor_loop/analysis_long_horizon.py \
+  --long_dir Experiments/attractor_loop/results/chexgen_long \
+  --ref_dir Experiments/attractor_loop/reference_embeddings \
+  --data_csv processed_data/processed_data.csv \
+  --out_dir Experiments/attractor_loop/analysis_long \
+  --K_max 100 \
+  --blocks A,C,E,G,H,I,J
+```
 
-## Output Structure
+## 7. Make Figures
 
-- **Experiments/:** Configuration files for each experimental run
-- **Results/:** Analysis outputs, visualizations, attractor catalogs
-- **logs/:** Training logs, tensorboard events, metrics
-- **models/:** Checkpoints and pre-trained weights
+`all_figs.py` expects `Experiments/attractor_loop/figures/style.py` to be
+present.
 
-## Key References
+```bash
+export MPLCONFIGDIR=/tmp/matplotlib-$USER
+mkdir -p "$MPLCONFIGDIR"
 
-### Foundational Papers
+python3 Experiments/attractor_loop/figures/all_figs.py \
+  --panels all \
+  --block_k Experiments/attractor_loop/analysis_long/block_K_results.json \
+  --analysis_json Experiments/attractor_loop/analysis_long/analysis_results.json \
+  --long_horizon Experiments/attractor_loop/analysis_long/long_horizon_results.json \
+  --out_dir Experiments/attractor_loop/figures \
+  --pdf
+```
 
-1. **Hintze et al. (2025).** "Autonomous language-image generation loops converge to generic visual motifs." *Patterns* (Cell Press).
+## Notes
 
-2. **Shumailov et al. (2024).** "AI models collapse when trained on recursively generated data." *Nature*.
-
-3. **Chemnitz et al. (2025).** "A Dynamical Systems Perspective on the Analysis of Neural Networks." *arXiv*.
-
-### Medical Imaging & Foundation Models
-
-4. **Bluethgen et al. (2024).** "A vision-language foundation model for the generation of realistic chest X-ray images." *Nature Biomedical Engineering*.
-
-5. **Johnson et al. (2019).** "MIMIC-CXR: A de-identified publicly available database of chest radiographs with free-text reports." *Scientific Data*.
-
-6. **Ark+ (2025).** Foundation model for chest radiography. *Nature*.
-
-### Technical Methods
-
-7. **Radford et al. (2021).** "Learning Transferable Visual Models From Natural Language Supervision." *ICML* (CLIP).
-
-8. **Ho et al. (2020).** "Denoising Diffusion Probabilistic Models." *NeurIPS*.
-
-9. **Liang et al. (2022).** "Mind the gap: understanding the modality gap in multi-modal contrastive representation learning." *NeurIPS*.
-
-10. **Chou et al. (2024).** "Embedding Geometries of Contrastive Language-Image Pre-Training." *arXiv*.
-
-## Contributing
-
-This is a class project for BMIF203 Training. For questions or contributions:
-- Check existing Experiments/ and Results/ for prior work
-- Document new experiments in Experiments/ with configuration and notes
-- Update Results/ with analysis outputs and figures
-
-## License
-
-This project incorporates code from multiple sources:
-- **ChexGen:** [Apache 2.0 License](ChexGen/LICENSE)
-- **CLIP training:** Adapted from OpenAI's CLIP
-- **Diffusion components:** Adapted from Hugging Face Diffusers
-
-See individual component directories for specific license information.
-
-## Acknowledgments
-
-This project builds on:
-- [DiT (Diffusion Transformers)](https://github.com/facebookresearch/DiT)
-- [PixArt-alpha](https://github.com/PixArt-alpha/PixArt-alpha)
-- [OpenAI CLIP](https://github.com/openai/CLIP)
-- [Hugging Face Diffusers](https://github.com/huggingface/diffusers)
-- [MIMIC-CXR Dataset](https://physionet.org/content/mimic-cxr-jpg/)
+- All example runs use seed `100`.
+- Run scripts from the repo root.
+- The loop scripts resume automatically when study outputs already exist.
+- The K=100 script requires the K=10 outputs first.

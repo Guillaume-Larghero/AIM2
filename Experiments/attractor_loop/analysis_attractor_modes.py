@@ -1,72 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 — Block K: Generated-pathology mode structure analysis
-                (the "elevator-music attractor" test).
-
-============================================================================
-QUESTION
-============================================================================
-At iter K, do the loop's generated CheXpert profiles cluster into a small
-number of canonical modes ("Cardiomegaly mode", "No Finding mode", etc.),
-or remain diffusely distributed across patient-specific profiles?
-
-The "elevator-music attractor" hypothesis (Hintze et al. 2026, Cell Patterns)
-predicts that long-iterated coupled generative loops collapse onto a
-small set of generic motifs. If true for our medical loop, we should
-see: at iter K, a small number of canonical CheXpert profiles cover
-most of the cohort, AND those profiles are generated regardless of
-input patient (i.e., mode size at iter K >> GT prevalence of that
-profile, and within-mode GT match rate ≈ chance).
-
-============================================================================
-THREE DEFINITIONS OF "MODE" (reported side-by-side; honest)
-============================================================================
-1. HARD-PROFILE MODE — every unique 14-bit CheXpert profile is its own
-   mode. Direct test for elevator-music: does the iter-K cohort collapse
-   onto a small number of *identical* profiles? No clustering choices.
-   Reports: distinct profile count, top-N coverage, Shannon entropy,
-   perplexity (effective number of profiles).
-
-2. SOFT-CLUSTER MODE — k-means on the 14-bit profile vectors (Hamming
-   ≡ squared-Euclidean for binary). Captures family structure (e.g.,
-   "Cardiomegaly + any subset" as one family). Reports: best K by
-   silhouette, modal profile per cluster, per-cluster size and purity.
-
-3. SINGLE-LABEL MARGINAL — for each of 14 labels, fraction of cohort
-   with that label positive at iter K. Compared to iter-0 and GT.
-   Loses co-occurrence info but maximally interpretable.
-
-============================================================================
-MODE PURITY (the crucial second test)
-============================================================================
-For each top profile m at iter K with prevalence p_K(m):
-  • size_K(m)         = N · p_K(m)
-  • GT_match_rate(m)  = P(study's GT profile == m | study's iter-K profile == m)
-  • GT_prevalence(m)  = P(study's GT profile == m)
-  • Lift(m)           = GT_match_rate(m) / GT_prevalence(m)
-  • Inflation(m)      = p_K(m) / GT_prevalence(m)
-
-Interpretation:
-  Lift ≈ 1, Inflation >> 1   → ELEVATOR MUSIC: mode generated regardless of input
-  Lift >> 1, Inflation ≈ 1   → PRESERVATION:   mode reflects faithful copy of GT
-  Lift ≈ 1, Inflation ≈ 1    → DIFFUSE:        no mode collapse at all
-
-============================================================================
-INPUT
-============================================================================
-  Trajectory directory (chexgen_main K=11 OR chexgen_long K=101, same schema)
-  CheXpert columns from processed_data.csv (GT)
-  Project's CheXpertLabelExtractor (sys.path walk-up; rule-based fallback)
-
-============================================================================
-OUTPUT
-============================================================================
-  block_K_results.json     — all numbers per probe iter
-  figures/K_*.pdf          — profile distributions, mode purity, marginals,
-                              entropy/distinct-count trajectories
-  tables/K_top_profiles_iter_*.tsv — top 30 profiles per iter (for appendix)
-"""
-
 import argparse
 import json
 import logging
@@ -94,9 +25,9 @@ CHEXPERT_LABELS = [
 ]
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Empty-profile (no-CheXpert-label) characterization
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #
 # A report whose CheXpert profile is {} falls into 3 heterogeneous categories
 # that matter for paper interpretation:
@@ -312,7 +243,7 @@ def categorize_empty_report(text):
 
 
 def analyze_empty_profiles_at_iter(profiles_at_iter, findings_at_iter, sids,
-                                     n_examples_per_category=5, seed=42):
+                                     n_examples_per_category=5, seed=100):
     """For each {} profile at this iter, categorize the report.
 
     Args:
@@ -389,9 +320,9 @@ def analyze_empty_profiles_at_iter(profiles_at_iter, findings_at_iter, sids,
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  GT-OOV BASELINE ANALYSIS
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #
 # Apply the same OOV regex taxonomy used on generated reports to the GROUND
 # TRUTH FINDINGS column of the cohort. This gives the BASELINE prevalence
@@ -487,9 +418,9 @@ def compute_oov_inflation_table(gt_oov_baseline, results, probe_iters):
     return table
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  PERMUTATION-NULL GAP STATISTIC (correlation-aware null)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #
 # The default Tibshirani gap statistic uses a marginal-matched Bernoulli null
 # (each label sampled independently at its empirical positive rate). This
@@ -512,7 +443,7 @@ def compute_oov_inflation_table(gt_oov_baseline, results, probe_iters):
 # whether attractor dynamics produce non-trivial concentration.
 
 def soft_cluster_gap_permutation_null(profiles, label_names, K_range=(2, 25),
-                                       n_perm=100, rng_seed=42):
+                                       n_perm=100, rng_seed=100):
     """Gap statistic with row-permutation null (correlation-preserving).
 
     The null shuffles ANCHOR assignments of full iter-K profile rows.
@@ -576,9 +507,9 @@ def soft_cluster_gap_permutation_null(profiles, label_names, K_range=(2, 25),
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Three-regime entropy dynamics fit (the Lyapunov bounce-back signature)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #
 # The two-timescale Lyapunov picture (Block B) predicts a non-monotonic
 # entropy trajectory:
@@ -706,9 +637,9 @@ def fit_lyapunov_three_regime(probe_iters, entropies):
     return base
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  CheXpert extractor (mirroring analysis_surface_form.get_chexpert_extractor)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def get_chexpert_extractor(use_chexpert="auto"):
     """sys.path walk-up for the project CheXpertLabelExtractor."""
@@ -722,9 +653,9 @@ def get_chexpert_extractor(use_chexpert="auto"):
             candidates.append(walk)
             break
         walk = os.path.dirname(walk)
-    if "AIM2_BASE" in os.environ:
-        candidates.append(os.environ["AIM2_BASE"])
-    candidates.append("/n/groups/training/bmif203/AIM2")
+    if "BASE" in os.environ:
+        candidates.append(os.environ["BASE"])
+    candidates.append("../")
     for c in candidates:
         if c and os.path.isdir(c) and c not in sys.path:
             sys.path.insert(0, c)
@@ -799,9 +730,9 @@ def load_gt_labels(data_csv):
     return gt_map, available, gt_findings_map
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Trajectory loader — handles main_dir (K=11) or long_dir (K=101)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def load_trajectory_findings(traj_dir, probe_iters, max_studies=-1):
     """For each study, load findings text at the requested probe iters.
@@ -845,9 +776,9 @@ def load_trajectory_findings(traj_dir, probe_iters, max_studies=-1):
     return sids, findings, K_max_seen
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Helpers
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def profile_to_label(p, max_chars=40):
     """Render a frozenset profile as a sortable, readable label string."""
@@ -862,9 +793,9 @@ def profile_to_vector(p, label_names):
     return np.array([1 if lbl in p else 0 for lbl in label_names], dtype=np.int8)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Hard-profile analysis (Definition 1)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def hard_profile_stats(profiles, top_n=30):
     """Stats over the empirical distribution of distinct profiles.
@@ -928,12 +859,12 @@ def hard_profile_stats(profiles, top_n=30):
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Soft-cluster analysis (Definition 2)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def soft_cluster_stats(profiles, label_names, K_range=(2, 25), n_gap_refs=10,
-                         rng_seed=42):
+                         rng_seed=100):
     """k-means on 14-bit binary vectors. For binary {0,1}, ||a-b||² == Hamming(a,b).
     Reports per-K silhouette + gap statistic + best K by both criteria, plus
     per-cluster modal profile.
@@ -1065,9 +996,9 @@ def soft_cluster_stats(profiles, label_names, K_range=(2, 25), n_gap_refs=10,
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Single-label marginal analysis (Definition 3)
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def single_label_marginals(profiles, label_names):
     """Per-label positive rate + Shannon entropy of the binary marginal."""
@@ -1089,9 +1020,9 @@ def single_label_marginals(profiles, label_names):
     return out
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Mode purity vs GT
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def mode_purity_analysis(profiles_iter_K, gt_profiles, top_n=30):
     """For each top profile m at iter K, compute size / GT-prevalence / purity.
@@ -1153,9 +1084,9 @@ def mode_purity_analysis(profiles_iter_K, gt_profiles, top_n=30):
     return rows
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Distribution-level comparison (TV distance, KL div) between iter K and GT
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def distribution_distance(profiles_a, profiles_b, eps=1e-12):
     """TV and KL between profile distributions (over the union of observed profiles)."""
@@ -1174,9 +1105,9 @@ def distribution_distance(profiles_a, profiles_b, eps=1e-12):
             "symm_kl": (kl_ab + kl_ba) / 2.0}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Figures
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def make_figures(results, out_dir, label_names, probe_iters):
     import matplotlib.pyplot as plt
@@ -1627,9 +1558,9 @@ def write_empty_breakdown_tables(results, out_dir, probe_iters):
                     "K_empty_*.tsv")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Main
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def parse_args():
     p = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1637,7 +1568,7 @@ def parse_args():
     p.add_argument("--trajectory_dir", required=True,
                     help="chexgen_main (K=11) or chexgen_long (K=101).")
     p.add_argument("--data_csv",
-                    default="/n/groups/training/bmif203/AIM2/processed_data/processed_data.csv")
+                    default="..//processed_data/processed_data.csv")
     p.add_argument("--out_dir", required=True)
     p.add_argument("--probe_iters", default=None,
                     help="Comma-separated list of iters. Default: auto by K_max.")
@@ -1660,7 +1591,7 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
 
     logger.info("=" * 60)
-    logger.info("AIM2 Block K — Generated-pathology mode structure")
+    logger.info("Block K — Generated-pathology mode structure")
     logger.info("=" * 60)
     for k, v in vars(args).items():
         logger.info(f"  {k}: {v}")
@@ -1798,7 +1729,7 @@ def main():
         # vs short/other. Reports the heterogeneity of the {} class
         # (essential for honest headline interpretation).
         rk["empty_breakdown"] = analyze_empty_profiles_at_iter(
-            prof_k, findings[k], sids, n_examples_per_category=5, seed=42)
+            prof_k, findings[k], sids, n_examples_per_category=5, seed=100)
         eb = rk["empty_breakdown"]
         if eb["n_total_empty"] > 0:
             top_cats = sorted(eb["primary_category_counts"].items(),
@@ -1848,7 +1779,7 @@ def main():
                     iter_profiles[k_probe], available_labels,
                     K_range=(K_min_sc, K_max_sc),
                     n_perm=args.gap_perm_n if hasattr(args, "gap_perm_n") else 50,
-                    rng_seed=42))
+                    rng_seed=100))
             best_k = results["gap_perm_null"][f"iter_{k_probe}"]["best_k_gap"]
             logger.info(f"      iter-{k_probe}: best K_c (perm null) = {best_k}")
 

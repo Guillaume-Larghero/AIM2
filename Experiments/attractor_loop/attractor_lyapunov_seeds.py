@@ -1,50 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 ChexGen — Lyapunov Long-Horizon: K=100 seed-replicate experiment
-
-Extends the original K=10 Lyapunov experiment to K=100 to support the
-paper's Block K story: characterize whether per-anchor divergence
-λ̄_a > 0 PERSISTS past K=10 (driving the K=30→K=100 entropy bounce-back
-predicted by the two-timescale framework).
-
-Setup:
-  20 anchors × 10 seeds = 200 trajectories, each K=100 iterations.
-
-Output layout (NEW directory chexgen_lyapunov_long):
-  results/chexgen_lyapunov_long/
-    anchor_<study_id>/
-      seed_<jj>/                          jj ∈ {0..09}
-        gt_image.png, gt_findings.txt
-        anchor_img_embed.npy
-        anchor_text_embed.npy
-        gen_iter_000.png … gen_iter_100.png
-        findings_iter_000.txt …
-        img_embed_iter_000.npy …
-        text_embed_iter_000.npy …
-        metrics.json
-    summary.json
-
-Resume strategy (per-seed, robust):
-  Each seed_<jj>/ is independently resumable:
-   • If metrics.json exists AND img_embed files cover requested K → cached, skipped
-   • If partial (some iters done) → metrics.json removed, run_loop re-entered;
-     run_loop's internal per-iter resume picks up from the last completed iter
-   • If empty → run from scratch
-  This makes the script SLURM-array friendly and crash-safe.
-
-Anchor selection — IMPORTANT:
-  Defaults to quantile-based selection from main_dir/summary.json (matching the
-  original Lyapunov experiment's design). If you want to reproduce the
-  EXACT 20 anchors used in the K=10 Lyapunov full run, pass --anchor_ids
-  with the study IDs from chexgen_lyapunov_full's summary.json.
-
-Compute estimate (K=100 from scratch, no pre-stage):
-  ~13 sec per iter on L40S × 100 iters × 200 trajectories = ~72 GPU-hr
-  As SLURM array (1 task per anchor, 10 seeds × 100 iters = 1000 calls each):
-  ~3.6 hr wallclock per task; with 8 concurrent GPUs across gpu_yu/gpu_quad,
-  total wall ≈ 9 hr.
-"""
-
 import argparse
 import gc
 import json
@@ -59,7 +12,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-BASE_DIR = "/n/groups/training/bmif203/AIM2"
+BASE_DIR = "../"
 sys.path.insert(0, BASE_DIR)
 sys.path.insert(0, f"{BASE_DIR}/Experiments/attractor_loop")
 
@@ -218,7 +171,7 @@ def parse_args():
                    help="Iterations per trajectory (K=100 for paper).")
     p.add_argument("--num_steps",   type=int, default=100)
     p.add_argument("--cfg_scale",   type=float, default=4.0)
-    p.add_argument("--base_seed",   type=int, default=20000,
+    p.add_argument("--base_seed",   type=int, default=100,
                    help="MUST match chexgen_lyapunov_full base_seed if "
                         "extending those exact trajectories.")
     p.add_argument("--data_csv",    type=str,
@@ -262,7 +215,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     logger.info("=" * 60)
-    logger.info("AIM2 ChexGen Lyapunov Long-Horizon (K=100)")
+    logger.info("ChexGen Lyapunov Long-Horizon (K=100)")
     logger.info("=" * 60)
     for k, v in vars(args).items():
         logger.info(f"  {k}: {v}")

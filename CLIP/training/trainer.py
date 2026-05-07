@@ -1,16 +1,3 @@
-"""Trainer for Medical CLIP.
-
-Bug fixed from original:
-  Scheduler T_max was set in mini-batch steps (len(loader) × epochs).
-  But scheduler.step() fires every accum_steps mini-batches (once per optimizer
-  step). With accum_steps=16, the cosine traversed only 1/16 of its intended
-  period — the LR effectively never decayed.
-
-  Fix: compute total_steps = (len(loader) // accum_steps) × epochs.
-  T_max and warmup_steps are now in OPTIMIZER STEPS, matching the rate at
-  which scheduler.step() is actually called.
-"""
-
 import os
 import torch
 import torch.optim as optim

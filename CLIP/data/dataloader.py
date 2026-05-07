@@ -1,16 +1,3 @@
-"""DataLoader factory for Medical CLIP training.
-
-Changes from original:
-  - image_size and use_findings_only forwarded from config to MIMICCXRDataset.
-  - combine_sections forwarded explicitly (was already there, kept for clarity).
-  - drop_last=True on train_loader (keeps batch size fixed for InfoNCE loss).
-  - Dataloader summary printed after construction.
-
-Bugs fixed vs previous draft:
-  - split='val' corrected to split='validate' (matches CSV split column values).
-  - import path corrected: from .transforms (sibling file) not ..transforms.transforms.
-"""
-
 from torch.utils.data import DataLoader
 
 from .dataset import MIMICCXRDataset, collate_fn

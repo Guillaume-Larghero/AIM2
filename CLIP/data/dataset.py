@@ -1,16 +1,3 @@
-"""PyTorch Dataset for MIMIC-CXR image-report pairs.
-
-Changes from original:
-  1. image_size parameter — used for blank-image fallback (was hardcoded 224).
-  2. use_findings_only parameter (default True):
-       - Filters to has_findings=True rows at init time.
-       - _prepare_text() returns FINDINGS section only.
-     Rationale: MAIRA-2 generates FINDINGS only. Using FINDINGS on both sides
-     makes the GT↔generated MedCLIP embedding comparison fair.
-  3. Diagnostic prints: sample reports at init, tensor shape + token counts
-     on first few __getitem__ calls (3 per dataloader worker).
-"""
-
 import pandas as pd
 import torch
 from torchvision import transforms

@@ -1,66 +1,3 @@
-"""
-all_figs.py — Unified figure generator for the AIM2 NeurIPS 2026 paper.
-
-Each panel is an independent function that produces ONE PNG. Multi-panel
-layouts are assembled manually.
-
-Data flow
----------
-All numeric values are pulled from the JSON outputs of attractor_analysis
-and analysis_long_horizon. Nothing is hardcoded except path defaults.
-
-Required JSON contents
-----------------------
-analysis_results.json:
-    "B".lambda_sys_final              (scalar)
-    "B".lyapunov_per_anchor           (dict: sid -> list of length K+1)
-    "B".monotone_V_frac               (scalar)
-    "B".basin_radius_p95              (scalar)
-    "E".MI_img_per_k, "E".MI_txt_per_k (lists of length K+1)
-    "n_trajectories"                   (scalar)
-
-block_K_results.json:
-    "n_studies", "probe_iters"
-    "iter_<k>".hard.{entropy_bits, distinct_profiles, top_n_coverage, top_profiles}
-    "iter_<k>".mode_purity, "iter_<k>".empty_breakdown
-
-long_horizon_results.json:
-    "A".image / "A".text / "<K>".tortuosity_mean
-    "J".image / "J".text / autocorr_late_mean, lags, random_pair_autocorr,
-        tau_mix_iters
-
-Usage
------
-    python all_figs.py --panels all
-    python all_figs.py --panels fig5a,fig6a
-    python all_figs.py --panels all \\
-        --block_k        ...block_K_results.json \\
-        --analysis_json  ...analysis_results.json \\
-        --long_horizon   ...long_horizon_results.json
-
-Panel registry
---------------
-Fig 1 (profile distributions)
-    fig1a / fig1b / fig1c   GT / iter-10 / iter-100 distributions
-Fig 2 (mode purity)
-    fig2a / fig2b           K=10 / K=100 mode purity scatter
-    fig2a_labeled /
-    fig2b_labeled           Diagnostic versions with profile labels next to each
-                            marker (used for internal review; not for camera-ready)
-    fig2c                   top-4 coverage + GT match across K
-Fig 3
-    fig3                    MI(z_0; z_k) full curve
-Fig 4 (OOV/COPD)
-    fig4a                   empty-class composition stacked bar
-    fig4b                   per-OOV-category cohort fraction across K
-Fig 5 (Lyapunov)
-    fig5a                   per-anchor λ_a(k) traces + cohort mean + λ_sys(k)
-                            (combined; legend saved separately as fig5_legend.png)
-    fig5c                   tortuosity vs K
-Fig 6 (long-horizon dynamics, no Lyapunov-prediction overlays)
-    fig6a                   H(K) two-regime entropy curve
-    fig6b                   Block-J autocorrelation curve
-"""
 from __future__ import annotations
 
 import argparse
@@ -93,10 +30,10 @@ from style import (
 # ════════════════════════════════════════════════════════════════════════════
 
 DEFAULTS = {
-    "block_k":        "/n/groups/training/bmif203/AIM2/Experiments/attractor_loop/analysis_long/block_K_results.json",
-    "analysis_json":  "/n/groups/training/bmif203/AIM2/Experiments/attractor_loop/analysis_long/analysis_results.json",
-    "long_horizon":   "/n/groups/training/bmif203/AIM2/Experiments/attractor_loop/analysis_long/long_horizon_results.json",
-    "out_dir":        "/n/groups/training/bmif203/AIM2/Experiments/attractor_loop/figures",
+    "block_k":        "/attractor_loop/analysis_long/block_K_results.json",
+    "analysis_json":  "/attractor_loop/analysis_long/analysis_results.json",
+    "long_horizon":   "/attractor_loop/analysis_long/long_horizon_results.json",
+    "out_dir":        "/attractor_loop/figures",
 }
 
 
@@ -345,7 +282,7 @@ def _mode_purity_panel(ax, mode_purity, n_total, probe_k, add_labels=False):
             by_class[e["classification"]].append(e)
 
     max_size = max((e["size_K"] for e in mode_purity), default=10)
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(100)
 
     # Track plotted positions and labels for optional annotation pass.
     label_records = []  # list of (x, y, label_str)

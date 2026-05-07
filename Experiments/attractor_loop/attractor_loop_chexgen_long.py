@@ -1,64 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 — Long-Horizon Loop Extension (K=100).
-
-Extends the chexgen_main loop from K=10 to K=100. Two modes:
-
-  • Stratified subset (default, --n_anchors 50):
-      Picks N anchors at quantiles 0.02..0.98 of iter-0 image cosine.
-      Used for the initial K=100 N=48 ablation (see paper §5.11).
-
-  • Full cohort (--use_all):
-      Uses ALL valid studies in main_dir, sorted by study_id.
-      Used to scale the long-horizon analysis to N=1081 for the
-      "elevator-music attractor" test (Block K) — clustering iter-100
-      generated CheXpert vectors to detect canonical pathology-mode
-      attractors. Studies already complete in output_dir are detected
-      via a fast existence check and skipped in seconds.
-
-REUSE STRATEGY:
-  For each anchor, copies iter-0..10 outputs (PNGs, .npy embeddings,
-  findings .txt, anchor.npy) from chexgen_main/<sid>/ to chexgen_long/<sid>/.
-  Then runs iter 11..100 fresh, using:
-    • current_img = PIL.open(gen_iter_010.png)        — last K=10 image
-    • prev_img_emb / prev_text_emb = iter-10 embeddings
-    • iter_seed = base_seed + k                        — same convention as main
-  This is bit-identical to what would happen if we ran K=100 from scratch,
-  modulo PNG round-trip (lossless, ~1e-6 numerical noise — negligible).
-
-COST:
-  Per fresh anchor: 90 new iters × ~13 sec = 1170 sec ≈ 20 min
-  N=1081 full cohort: 1081 × 20 min ≈ 360 GPU-hours
-  With 60-chunk SLURM array (~18 anchors per chunk): ~6 hours per chunk
-  With 8 concurrent GPUs: ~45 hours wall-clock total
-
-OUTPUT (per anchor): chexgen_long/<sid>/
-    anchor_img_embed.npy      (copied from main)
-    anchor_text_embed.npy     (copied from main)
-    gt_image.png              (copied from main)
-    gt_findings.txt           (copied from main)
-    gen_iter_NNN.png          (NNN ∈ 0..100; 0..10 copied, 11..100 fresh)
-    img_embed_iter_NNN.npy    (NNN ∈ 0..100)
-    text_embed_iter_NNN.npy   (NNN ∈ 0..100)
-    findings_iter_NNN.txt     (NNN ∈ 0..100)
-    metrics.json              (extended: 101 entries in image_cosine, etc.)
-
-USAGE (single-chunk, stratified subset):
-    python attractor_loop_chexgen_long.py \\
-        --n_anchors 50 --n_iters 100 --num_steps 100 --cfg_scale 4.0 \\
-        --base_seed 42 \\
-        --main_dir   .../results/chexgen_main \\
-        --output_dir .../results/chexgen_long
-
-USAGE (full N=1081 cohort, chunked SLURM array):
-    python attractor_loop_chexgen_long.py \\
-        --use_all --n_iters 100 --num_steps 100 --cfg_scale 4.0 \\
-        --base_seed 42 \\
-        --chunk_idx $SLURM_ARRAY_TASK_ID --n_chunks 60 \\
-        --main_dir   .../results/chexgen_main \\
-        --output_dir .../results/chexgen_long
-"""
-
 import argparse
 import gc
 import hashlib
@@ -94,13 +33,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BASE_DIR = "/n/groups/training/bmif203/AIM2"
+BASE_DIR = "../"
 DATA_CSV = f"{BASE_DIR}/processed_data/processed_data.csv"
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Anchor selection — quantile-based, deterministic
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def select_long_anchors(main_dir: str, n_anchors: int):
     """Pick n_anchors at evenly-spaced quantiles 0.02..0.98 of iter-0 image
@@ -157,9 +96,9 @@ def select_long_anchors_all(main_dir: str):
             for sid, cos in valid_sorted]
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Reuse logic — copy iter 0..K_existing from main_dir to output_dir
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def copy_existing_iters(sid: str, main_dir: str, out_dir: str, K_existing: int):
     """Copy iter-0..K_existing artifacts from main_dir/<sid>/ to out_dir/<sid>/.
@@ -226,9 +165,9 @@ def load_existing_metrics(sid: str, main_dir: str, K_existing: int):
     return m
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Long-horizon continuation loop
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def run_long_loop(
     *,
@@ -400,9 +339,9 @@ def run_long_loop(
     return metrics
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Main
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -420,9 +359,9 @@ def parse_args():
                    help="Iterations already present in main_dir to reuse.")
     p.add_argument("--num_steps",  type=int, default=100)
     p.add_argument("--cfg_scale",  type=float, default=4.0)
-    p.add_argument("--base_seed",  type=int, default=42,
+    p.add_argument("--base_seed",  type=int, default=100,
                    help="Base seed offset (ADD TO SHA256(study_id) per study). "
-                        "Must match what main run used: 42.")
+                        "Must match what main run used: 100.")
     p.add_argument("--chunk_idx",  type=int, default=0,
                    help="Chunk index for SLURM array.")
     p.add_argument("--n_chunks",   type=int, default=1)
@@ -440,9 +379,9 @@ def main():
 
     logger.info("=" * 60)
     if args.use_all:
-        logger.info("AIM2 Long-Horizon Loop Extension (K=100, FULL N=1081 cohort)")
+        logger.info("Long-Horizon Loop Extension (K=100, FULL N=1081 cohort)")
     else:
-        logger.info(f"AIM2 Long-Horizon Loop Extension (K={args.n_iters}, N={args.n_anchors})")
+        logger.info(f"Long-Horizon Loop Extension (K={args.n_iters}, N={args.n_anchors})")
     logger.info("=" * 60)
     for k, v in vars(args).items():
         logger.info(f"  {k}: {v}")

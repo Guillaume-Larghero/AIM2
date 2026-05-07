@@ -1,41 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 — Training-Cluster Trajectory Analysis (Block H).
-
-Posthoc analysis run AFTER attractor_loop_chexgen full run completes.
-
-QUESTION ANSWERED:
-  "Into which regions of the original training distribution do trajectories
-   collapse over iterations, and how fast?"
-
-This is fundamentally different from Block C (which clusters on iter-K
-endpoints). Here we cluster on the FULL TRAINING distribution (55,691 MedCLIP
-train+val embeddings, already cached in reference_embeddings/), then ask at
-every trajectory iteration which training cluster each point belongs to.
-
-THIS DIRECTLY ENABLES THE HINTZE COMPARISON:
-  Hintze et al. observed convergence to "12 dominant motifs." We can
-  quantify the analogous phenomenon: per-iteration assignment entropy
-  starts high (test cohort spans many training clusters), then collapses
-  if trajectories funnel into a few generic modes.
-
-OUTPUTS:
-  analysis/H_training_clusters/
-  ├── H_training_clusters.npz       — cluster fits, per-iter assignments, transitions
-  ├── H_assignment_entropy.csv      — entropy per iter, image and text modalities
-  ├── H_dominant_clusters.csv       — top-K clusters by iter-K population
-  ├── H_transition_matrices.npz     — per-iter Markov transition matrices
-  └── H_*.pdf                       — figures: entropy curve, transition heatmaps
-
-USAGE:
-  python analysis_training_clusters.py \\
-      --main_dir   .../results/chexgen_main \\
-      --ref_dir    .../reference_embeddings \\
-      --out_dir    .../analysis \\
-      --n_clusters 15 \\
-      --modality   image     # or "text"
-"""
-
 import argparse
 import json
 import logging
@@ -60,9 +22,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Helpers
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def cosine_distance_matrix(A: np.ndarray, B: np.ndarray) -> np.ndarray:
     """Cosine distance between rows of A and rows of B. Inputs need not be
@@ -73,7 +35,7 @@ def cosine_distance_matrix(A: np.ndarray, B: np.ndarray) -> np.ndarray:
 
 
 def fit_training_clusters(train_embs: np.ndarray, n_clusters: int = 15,
-                           random_state: int = 42, max_silhouette_n: int = 10000):
+                           random_state: int = 100, max_silhouette_n: int = 10000):
     """Fit k-means on training embeddings.
 
     For 55K points in 256-d, k-means takes ~30 sec. Silhouette is O(N²) so
@@ -88,7 +50,7 @@ def fit_training_clusters(train_embs: np.ndarray, n_clusters: int = 15,
 
     # Silhouette on subsample for speed (cosine metric)
     if len(train_embs) > max_silhouette_n:
-        idx = np.random.default_rng(42).choice(len(train_embs), max_silhouette_n,
+        idx = np.random.default_rng(100).choice(len(train_embs), max_silhouette_n,
                                                 replace=False)
         sil = float(silhouette_score(train_embs[idx], train_assignments[idx],
                                      metric="cosine"))
@@ -138,9 +100,9 @@ def transition_matrix(assignments_t: np.ndarray, assignments_tp1: np.ndarray,
     return T
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 #  Main
-# ══════════════════════════════════════════════════════════════════════════════
+# 
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -154,7 +116,7 @@ def parse_args():
     p.add_argument("--n_clusters", type=int, default=15,
                    help="k for k-means on training embeddings.")
     p.add_argument("--modality",   choices=["image", "text", "both"], default="both")
-    p.add_argument("--random_state", type=int, default=42)
+    p.add_argument("--random_state", type=int, default=100)
     return p.parse_args()
 
 
@@ -400,7 +362,7 @@ def main():
         os.makedirs(d, exist_ok=True)
 
     logger.info("=" * 60)
-    logger.info("AIM2 Training-Cluster Trajectory Analysis (Block H)")
+    logger.info("Training-Cluster Trajectory Analysis (Block H)")
     logger.info("=" * 60)
     for k, v in vars(args).items():
         logger.info(f"  {k}: {v}")

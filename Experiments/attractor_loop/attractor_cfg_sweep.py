@@ -1,31 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 — CFG Sweep Ablation.
-
-Tests whether anchor-information loss in the MAIRA-2 ↔ ChexGen loop is
-robust to classifier-free guidance (CFG) strength.
-
-Hypothesis under test:
-  Lower CFG → less prior dominance from ChexGen → more anchor information
-  preserved per iteration. If MI loss is similar across CFG ∈ {2, 4, 7},
-  the loss is a robust property of the coupled map, not a CFG artifact.
-
-Design:
-  • 20 anchors selected from main-run summary at quantiles 0.05..0.95 of
-    iter-0 image cosine (same selection as Lyapunov v2).
-  • Each anchor run at CFG ∈ {2.0, 7.0}. (CFG=4.0 is the main run.)
-  • 6 iterations (matching Lyapunov), num_steps=100.
-  • Single seed per (anchor, CFG) — we're not testing within-cell variance,
-    we're testing across-CFG mean shift.
-
-Total trajectories: 20 anchors × 2 CFG = 40 trajectories
-Per-trajectory: ~50 sec → ~33 min compute + 3 min model load → ~40 min.
-
-Output: results/chexgen_cfg_sweep/cfg_<X>/<anchor_sid>/<seed_NNN>/
-
-Reuses load_medclip / load_maira / load_chexgen / run_loop from main script.
-"""
-
 import argparse
 import gc
 import json
@@ -96,7 +68,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BASE_DIR = "/n/groups/training/bmif203/AIM2"
+BASE_DIR = "../"
 DATA_CSV = f"{BASE_DIR}/processed_data/processed_data.csv"
 
 
@@ -110,7 +82,7 @@ def parse_args():
     p.add_argument("--n_iters",     type=int, default=5,
                    help="Iterations per trajectory (6 total including iter 0).")
     p.add_argument("--num_steps",   type=int, default=100)
-    p.add_argument("--base_seed",   type=int, default=30000,
+    p.add_argument("--base_seed",   type=int, default=100,
                    help="Base seed for the sweep. Distinct from main run "
                         "(per-study hash) and Lyapunov (20000).")
     p.add_argument("--main_dir",    type=str,
@@ -127,7 +99,7 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("=" * 60)
-    logger.info("AIM2 CFG Sweep Ablation")
+    logger.info("CFG Sweep Ablation")
     logger.info("=" * 60)
     for k, v in vars(args).items():
         logger.info(f"  {k}: {v}")

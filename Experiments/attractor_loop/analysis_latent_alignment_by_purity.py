@@ -1,21 +1,3 @@
-#!/usr/bin/env python3
-"""
-AIM2 — Block L (Purity): Cosine similarity stratified by mode purity classification.
-
-============================================================================
-QUESTION
-============================================================================
-Do different mode types (elevator-music, preserved, amplified, novel) have
-different image-text embedding alignment signatures?
-
-Hypothesis:
-  • Elevator-music modes:   HIGH cos_sim (both modalities converged to same artifact)
-  • Preserved modes:        MEDIUM cos_sim (both tracking ground truth)
-  • Amplified modes:        MEDIUM/LOW cos_sim (image amplified; text faithful)
-  • Novel modes:            LOW cos_sim (text invents; image doesn't)
-  • Empty {} class:         MIXED (OOV disease vs explicit-normal mismatch)
-"""
-
 import argparse
 import json
 import logging
@@ -80,7 +62,7 @@ def main():
     os.makedirs(args.figures_dir, exist_ok=True)
 
     logger.info("=" * 70)
-    logger.info("AIM2 Block L (Purity) — Cosine similarity by mode purity classification")
+    logger.info("Block L (Purity) — Cosine similarity by mode purity classification")
     logger.info("=" * 70)
 
     # Load Block K results (contains mode purity classifications)
