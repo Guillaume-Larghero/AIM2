@@ -26,7 +26,20 @@ __pycache__/
 # **/outputs/
 
 #Experiments
-Experiments/
+# Experiments/
 
 
 models/CLIP/scripts/logs/
+GENERATION/outputs/
+Experiments/attractor_loop/analysis_long/
+Experiments/attractor_loop/results/
+Experiments/finetune_lora_SD35/
+Experiments/finetune_lora/
+Experiments/Basic_diagnosis_3_img_generation_embedding_landscape/
+Experiments/attractor_loop/logs/
+Experiments/attractor_loop/figures/**/*.png
+Experiments/attractor_loop/analysis/
+Experiments/attractor_loop/maira-2/
+Experiments/attractor_loop/reference_embeddings/
+models/RoentGen-v2/
+RAG/outputs/

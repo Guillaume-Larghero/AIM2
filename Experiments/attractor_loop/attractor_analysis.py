@@ -1604,7 +1604,7 @@ def parse_args():
     p.add_argument("--out_dir",      type=str, default=DEFAULT_OUT)
     p.add_argument("--data_csv",     type=str,
                    default=f"{BASE_DIR}/processed_data/processed_data.csv")
-    p.add_argument("--blocks",       nargs="+", default=list("ABCEF"))
+    p.add_argument("--blocks",       nargs="+", default=list("ABCDEF"))
     p.add_argument("--n_permutations", type=int, default=1000,
                    help="Permutations for Block F profile-distance test.")
     return p.parse_args()
